@@ -38,116 +38,119 @@ namespace io
 {
 
 template <typename MESH>
-bool import_TET(MESH& m, const std::string& filename)
+bool import_TET(MESH& m, const std::string& filename, std::vector<uint32>* vertex_id_after_import = nullptr)
 {
-	static_assert(mesh_traits<MESH>::dimension == 3, "MESH dimension should be 3");
+    static_assert(mesh_traits<MESH>::dimension == 3, "MESH dimension should be 3");
 
-	using Vertex = typename MESH::Vertex;
+    using Vertex = typename MESH::Vertex;
 
-	Scoped_C_Locale loc;
+    Scoped_C_Locale loc;
 
-	VolumeImportData volume_data;
+    VolumeImportData volume_data;
 
-	std::ifstream fp(filename, std::ios::in);
+    std::ifstream fp(filename, std::ios::in);
 
-	std::string line;
-	line.reserve(512u);
+    std::string line;
+    line.reserve(512u);
 
-	// read number of vertices
-	uint32 nb_vertices = read_uint(fp, line);
-	getline_safe(fp, line);
+    // read number of vertices
+    uint32 nb_vertices = read_uint(fp, line);
+    getline_safe(fp, line);
 
-	uint32 nb_volumes = read_uint(fp, line);
-	getline_safe(fp, line);
+    uint32 nb_volumes = read_uint(fp, line);
+    getline_safe(fp, line);
 
-	if (nb_vertices == 0u)
-	{
-		std::cerr << "File \"" << filename << " has no vertices." << std::endl;
-		return false;
-	}
+    if (nb_vertices == 0u)
+    {
+        std::cerr << "File \"" << filename << " has no vertices." << std::endl;
+        return false;
+    }
 
-	volume_data.reserve(nb_vertices, nb_volumes);
+    volume_data.reserve(nb_vertices, nb_volumes);
 
-	// read vertices position
-	for (uint32 i = 0u; i < nb_vertices; ++i)
-	{
-		float64 x = read_double(fp, line);
-		float64 y = read_double(fp, line);
-		float64 z = read_double(fp, line);
-		volume_data.vertex_position_.push_back({x, y, z});
-	}
+    // read vertices position
+    for (uint32 i = 0u; i < nb_vertices; ++i)
+    {
+        float64 x = read_double(fp, line);
+        float64 y = read_double(fp, line);
+        float64 z = read_double(fp, line);
+        volume_data.vertex_position_.push_back({x, y, z});
+    }
 
-	// read volumes
-	for (uint32 i = 0u; i < nb_volumes; ++i)
-	{
-		uint32 n = read_uint(fp, line);
-		std::vector<uint32> ids(n);
-		for (uint32 j = 0u; j < n; ++j)
-			ids[j] = read_uint(fp, line);
+    // read volumes
+    for (uint32 i = 0u; i < nb_volumes; ++i)
+    {
+        uint32 n = read_uint(fp, line);
+        std::vector<uint32> ids(n);
+        for (uint32 j = 0u; j < n; ++j)
+            ids[j] = read_uint(fp, line);
 
-		switch (n)
-		{
-		case 4: {
-			if (geometry::test_orientation_3D(volume_data.vertex_position_[ids[0]],
-											  volume_data.vertex_position_[ids[1]],
-											  volume_data.vertex_position_[ids[2]],
-											  volume_data.vertex_position_[ids[3]]) == geometry::Orientation3D::UNDER)
-				std::swap(ids[1], ids[2]);
-			volume_data.volumes_types_.push_back(VolumeType::Tetra);
-			volume_data.volumes_vertex_indices_.insert(volume_data.volumes_vertex_indices_.end(), ids.begin(),
-													   ids.end());
-			break;
-		}
-		case 5: {
-			if (geometry::test_orientation_3D(volume_data.vertex_position_[ids[4]],
-											  volume_data.vertex_position_[ids[0]],
-											  volume_data.vertex_position_[ids[1]],
-											  volume_data.vertex_position_[ids[2]]) == geometry::Orientation3D::OVER)
-				std::swap(ids[1], ids[3]);
-			volume_data.volumes_types_.push_back(VolumeType::Pyramid);
-			volume_data.volumes_vertex_indices_.insert(volume_data.volumes_vertex_indices_.end(), ids.begin(),
-													   ids.end());
-			break;
-		}
-		case 6: {
-			if (geometry::test_orientation_3D(volume_data.vertex_position_[ids[3]],
-											  volume_data.vertex_position_[ids[0]],
-											  volume_data.vertex_position_[ids[1]],
-											  volume_data.vertex_position_[ids[2]]) == geometry::Orientation3D::OVER)
-			{
-				std::swap(ids[1], ids[2]);
-				std::swap(ids[4], ids[5]);
-			}
-			volume_data.volumes_types_.push_back(VolumeType::TriangularPrism);
-			volume_data.volumes_vertex_indices_.insert(volume_data.volumes_vertex_indices_.end(), ids.begin(),
-													   ids.end());
-			break;
-		}
-		case 8: {
-			if (geometry::test_orientation_3D(volume_data.vertex_position_[ids[4]],
-											  volume_data.vertex_position_[ids[0]],
-											  volume_data.vertex_position_[ids[1]],
-											  volume_data.vertex_position_[ids[2]]) == geometry::Orientation3D::OVER)
-			{
-				std::swap(ids[0], ids[3]);
-				std::swap(ids[1], ids[2]);
-				std::swap(ids[4], ids[7]);
-				std::swap(ids[5], ids[6]);
-			}
-			volume_data.volumes_types_.push_back(VolumeType::Hexa);
-			volume_data.volumes_vertex_indices_.insert(volume_data.volumes_vertex_indices_.end(), ids.begin(),
-													   ids.end());
-			break;
-		}
-		default:
-			std::cout << "import_TET: Elements with " << n << " vertices are not handled. Ignoring.";
-			break;
-		}
-	}
+        switch (n)
+        {
+        case 4: {
+            if (geometry::test_orientation_3D(volume_data.vertex_position_[ids[0]],
+                                              volume_data.vertex_position_[ids[1]],
+                                              volume_data.vertex_position_[ids[2]],
+                                              volume_data.vertex_position_[ids[3]]) == geometry::Orientation3D::UNDER)
+                std::swap(ids[1], ids[2]);
+            volume_data.volumes_types_.push_back(VolumeType::Tetra);
+            volume_data.volumes_vertex_indices_.insert(volume_data.volumes_vertex_indices_.end(), ids.begin(),
+                                                       ids.end());
+            break;
+        }
+        case 5: {
+            if (geometry::test_orientation_3D(volume_data.vertex_position_[ids[4]],
+                                              volume_data.vertex_position_[ids[0]],
+                                              volume_data.vertex_position_[ids[1]],
+                                              volume_data.vertex_position_[ids[2]]) == geometry::Orientation3D::OVER)
+                std::swap(ids[1], ids[3]);
+            volume_data.volumes_types_.push_back(VolumeType::Pyramid);
+            volume_data.volumes_vertex_indices_.insert(volume_data.volumes_vertex_indices_.end(), ids.begin(),
+                                                       ids.end());
+            break;
+        }
+        case 6: {
+            if (geometry::test_orientation_3D(volume_data.vertex_position_[ids[3]],
+                                              volume_data.vertex_position_[ids[0]],
+                                              volume_data.vertex_position_[ids[1]],
+                                              volume_data.vertex_position_[ids[2]]) == geometry::Orientation3D::OVER)
+            {
+                std::swap(ids[1], ids[2]);
+                std::swap(ids[4], ids[5]);
+            }
+            volume_data.volumes_types_.push_back(VolumeType::TriangularPrism);
+            volume_data.volumes_vertex_indices_.insert(volume_data.volumes_vertex_indices_.end(), ids.begin(),
+                                                       ids.end());
+            break;
+        }
+        case 8: {
+            if (geometry::test_orientation_3D(volume_data.vertex_position_[ids[4]],
+                                              volume_data.vertex_position_[ids[0]],
+                                              volume_data.vertex_position_[ids[1]],
+                                              volume_data.vertex_position_[ids[2]]) == geometry::Orientation3D::OVER)
+            {
+                std::swap(ids[0], ids[3]);
+                std::swap(ids[1], ids[2]);
+                std::swap(ids[4], ids[7]);
+                std::swap(ids[5], ids[6]);
+            }
+            volume_data.volumes_types_.push_back(VolumeType::Hexa);
+            volume_data.volumes_vertex_indices_.insert(volume_data.volumes_vertex_indices_.end(), ids.begin(),
+                                                       ids.end());
+            break;
+        }
+        default:
+            std::cout << "import_TET: Elements with " << n << " vertices are not handled. Ignoring.";
+            break;
+        }
+    }
 
-	import_volume_data(m, volume_data);
+    import_volume_data(m, volume_data);
 
-	return true;
+    if (vertex_id_after_import)
+        *vertex_id_after_import = volume_data.vertex_id_after_import_;
+
+    return true;
 }
 
 } // namespace io

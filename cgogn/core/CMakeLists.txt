@@ -71,6 +71,9 @@ set(src_list
 		"${CMAKE_CURRENT_LIST_DIR}/types/incidence_graph/incidence_graph.h"
 		"${CMAKE_CURRENT_LIST_DIR}/types/incidence_graph/incidence_graph.cpp"
 
+                "${CMAKE_CURRENT_LIST_DIR}/types/animation/animation_skeleton.h"
+                "${CMAKE_CURRENT_LIST_DIR}/types/animation/animation_skeleton.cpp"
+
 		"${CMAKE_CURRENT_LIST_DIR}/types/triangle_soup/triangle_soup.h"
 		"${CMAKE_CURRENT_LIST_DIR}/types/triangle_soup/triangle_soup.cpp"
 
@@ -79,7 +82,8 @@ set(src_list
 		"${CMAKE_CURRENT_LIST_DIR}/types/container/chunk_array.h"
 		"${CMAKE_CURRENT_LIST_DIR}/types/container/vector.h"
 
-		"${CMAKE_CURRENT_LIST_DIR}/functions/attributes.h"
+                "${CMAKE_CURRENT_LIST_DIR}/functions/identity.h"
+                "${CMAKE_CURRENT_LIST_DIR}/functions/attributes.h"
 		"${CMAKE_CURRENT_LIST_DIR}/functions/convert.h"
 		"${CMAKE_CURRENT_LIST_DIR}/functions/mesh_info.h"
 		"${CMAKE_CURRENT_LIST_DIR}/functions/traversals/vertex.h"

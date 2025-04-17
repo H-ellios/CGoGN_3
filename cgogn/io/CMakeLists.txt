@@ -40,6 +40,11 @@ set(src_list
 		"${CMAKE_CURRENT_LIST_DIR}/point/point_import.h"
 		"${CMAKE_CURRENT_LIST_DIR}/point/point_import.cpp"
 
+                "${CMAKE_CURRENT_LIST_DIR}/fbx/fbx_importer.h"
+                "${CMAKE_CURRENT_LIST_DIR}/fbx/fbx_importer.cpp"
+
+                "${CMAKE_CURRENT_LIST_DIR}/ui_modules/fbx_io.h"
+
 		"${CMAKE_CURRENT_LIST_DIR}/utils.h"
 )
 target_sources(${PROJECT_NAME} PRIVATE ${src_list})

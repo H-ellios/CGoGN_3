@@ -19,6 +19,9 @@ set(src_list
 	    "${CMAKE_CURRENT_LIST_DIR}/types/quadric.h"
 		"${CMAKE_CURRENT_LIST_DIR}/types/slab_quadric.h"
 		"${CMAKE_CURRENT_LIST_DIR}/types/spherical_quadric.h"
+                "${CMAKE_CURRENT_LIST_DIR}/types/rigid_transformation.h"
+                "${CMAKE_CURRENT_LIST_DIR}/types/dual_quaternion.h"
+                "${CMAKE_CURRENT_LIST_DIR}/types/keyframed_animation.h"
 
 		"${CMAKE_CURRENT_LIST_DIR}/functions/angle.h"
 		"${CMAKE_CURRENT_LIST_DIR}/functions/area.h"
@@ -29,10 +32,11 @@ set(src_list
 		"${CMAKE_CURRENT_LIST_DIR}/functions/intersection.h"
 		"${CMAKE_CURRENT_LIST_DIR}/functions/normal.h"
 		"${CMAKE_CURRENT_LIST_DIR}/functions/orientation.h"
+                "${CMAKE_CURRENT_LIST_DIR}/functions/quaternion_operations.h"
 
         "${CMAKE_CURRENT_LIST_DIR}/algos/angle.h"
         "${CMAKE_CURRENT_LIST_DIR}/algos/area.h"
-		"${CMAKE_CURRENT_LIST_DIR}/algos/centroid.h"
+                "${CMAKE_CURRENT_LIST_DIR}/algos/centroid.h"
 		"${CMAKE_CURRENT_LIST_DIR}/algos/curvature.h"
         "${CMAKE_CURRENT_LIST_DIR}/algos/distance.h"
         "${CMAKE_CURRENT_LIST_DIR}/algos/ear_triangulation.h"
@@ -48,12 +52,17 @@ set(src_list
 		"${CMAKE_CURRENT_LIST_DIR}/algos/registration.h"
         "${CMAKE_CURRENT_LIST_DIR}/algos/selection.h"
 		"${CMAKE_CURRENT_LIST_DIR}/algos/invertion.h"
+                "${CMAKE_CURRENT_LIST_DIR}/algos/animation_skeleton_embedding_helper.h"
+                "${CMAKE_CURRENT_LIST_DIR}/algos/skinning_helper.h"
+                "${CMAKE_CURRENT_LIST_DIR}/algos/skinning_weight_interpolation.h"
 
 		"${CMAKE_CURRENT_LIST_DIR}/ui_modules/registration.h"
 		"${CMAKE_CURRENT_LIST_DIR}/ui_modules/surface_differential_properties.h"
 		"${CMAKE_CURRENT_LIST_DIR}/ui_modules/surface_filtering.h"
 		"${CMAKE_CURRENT_LIST_DIR}/ui_modules/surface_selection.h"
 		"${CMAKE_CURRENT_LIST_DIR}/ui_modules/volume_selection.h"
+                "${CMAKE_CURRENT_LIST_DIR}/ui_modules/animation_skeleton_controller.h"
+                "${CMAKE_CURRENT_LIST_DIR}/ui_modules/skinning_controller.h"
 )
 target_sources(${PROJECT_NAME} PRIVATE ${src_list})
 source_group(TREE ${CMAKE_CURRENT_LIST_DIR} FILES ${src_list})

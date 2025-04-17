@@ -45,6 +45,7 @@ set(src_list
 		"${CMAKE_CURRENT_LIST_DIR}/ui_modules/volume_render.h"
 		"${CMAKE_CURRENT_LIST_DIR}/ui_modules/topo_render.h"
 		"${CMAKE_CURRENT_LIST_DIR}/ui_modules/surface_tex_render.h"
+                "${CMAKE_CURRENT_LIST_DIR}/ui_modules/animation_skeleton_render.h"
 
 		"${CMAKE_CURRENT_LIST_DIR}/shaders/shader_no_illum.h"
 		"${CMAKE_CURRENT_LIST_DIR}/shaders/shader_no_illum.cpp"
@@ -87,6 +88,8 @@ set(src_list
 		
 		"${CMAKE_CURRENT_LIST_DIR}/shaders/shader_bold_line.h"
 		"${CMAKE_CURRENT_LIST_DIR}/shaders/shader_bold_line.cpp"
+                "${CMAKE_CURRENT_LIST_DIR}/shaders/shader_animation_skeleton_bone.h"
+                "${CMAKE_CURRENT_LIST_DIR}/shaders/shader_animation_skeleton_bone.cpp"
 
 		"${CMAKE_CURRENT_LIST_DIR}/shaders/shader_point_sprite.h"
 		"${CMAKE_CURRENT_LIST_DIR}/shaders/shader_point_sprite.cpp"
@@ -138,6 +141,7 @@ set(src_list
 
 		"${CMAKE_CURRENT_LIST_DIR}/skelshape.h"
 		"${CMAKE_CURRENT_LIST_DIR}/skelshape.cpp"
+
 
 )
 target_sources(${PROJECT_NAME} PRIVATE ${src_list})
