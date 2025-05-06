@@ -31,6 +31,8 @@
 #include <cgogn/geometry/types/vector_traits.h>
 #include <thirdparty/rapidcsv/rapidcsv.h>
 
+#include <cgogn/modeling/algos/blending.h>
+
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -227,7 +229,7 @@ public:
 	//
 	void setup_csv_matrix(int incr, std::shared_ptr<Attribute<Vec3>> au, float weight)
 	{
-		blending(*selected_mesh_, {au}, {weight});
+		modeling::blending(*selected_mesh_, {au}, {weight});
 		if (incr == pos_aus_.size())
 		{
 			std::ostringstream command;
@@ -954,47 +956,6 @@ public:
 		mesh_provider_->emit_attribute_changed(m, color_change.get());
 	}
 
-	// Blending function
-	// Currently it's a sum of vectors of each different attributes that will be blent
-	void blending(MESH& m, std::vector<std::shared_ptr<Attribute<Vec3>>> attributes_to_blend, std::vector<float> weight_list)
-	{
-		std::shared_ptr<Attribute<Vec3>> vertex_position = cgogn::get_attribute<Vec3, Vertex>(m, "position");
-		std::shared_ptr<Attribute<Vec3>> color = cgogn::get_attribute<Vec3, Vertex>(m, "color");
-		std::shared_ptr<Attribute<Vec3>> repos_position = cgogn::get_attribute<Vec3, Vertex>(m, "AU00");
-		Attribute<Vec3>* new_vertex_pos_value = vertex_position.get();
-		Vec3 diff_distance_repos = Vec3(0, 0, 0);
-		float epsilon = 0.0001;
-
-		// need to check if parallel_foreach_cell messes with the calculations 
-		foreach_cell(m, [&](Vertex v) -> bool {
-			value<Vec3>(m, vertex_position, v) = value<Vec3>(m, repos_position, v);
-			Vec3 result = Vec3(0, 0, 0);
-			float nb_au_influence = 0.;
-
-			for (int i = 0; i < attributes_to_blend.size(); i++)
-			{	
-				diff_distance_repos = value<Vec3>(m, attributes_to_blend[i], v) - value<Vec3>(m, repos_position, v);
-				
-				if(abs(diff_distance_repos[0]) > 0. || abs(diff_distance_repos[1]) > 0. || abs(diff_distance_repos[2]) > 0.){
-					nb_au_influence++;
-				}
-				result += diff_distance_repos * weight_list[i];
-			}
-
-			if (nb_au_influence != 0.)
-				result = result / nb_au_influence;
-
-			result[0] = (abs(result[0]) > epsilon) ? result[0] : 0. ; 
-			result[1] = (abs(result[1]) > epsilon) ? result[1] : 0. ;
-			result[2] = (abs(result[2]) > epsilon) ? result[2] : 0. ;
-			
-			value<Vec3>(m, vertex_position, v) += result ;
-			return true;
-		});
-
-		mesh_provider_->emit_attribute_changed(m, new_vertex_pos_value);
-	}
-
 	// Function called each frame after clicking on Apply CSV
 	// Setup the differents AUs and weights to calculate the frames
 	void blending_csv(std::vector<float> weights, int incr, float poids_frame)
@@ -1021,7 +982,7 @@ public:
 				weight_list.push_back((csv_weights_detected_(incr - 1, i - 1) * (1 - poids_frame)) +
 						 (csv_weights_detected_(incr, i - 1) * poids_frame));
 		}
-		blending(*selected_mesh_, attributes_csv, weight_list);
+		modeling::blending(*selected_mesh_, attributes_csv, weight_list);
 	}
 
 	// Compute the distance between points in the starting configuration and the end configuration for the interpolation
@@ -1125,7 +1086,7 @@ protected:
 
 				static bool start = false;
 				static int i = 0;
-				static int nb_au = 1;
+				static int nb_au = 8;
 				if (attribute_to_blend_.size() != 0)
 				{
 					for (int i = 0; i < attribute_to_blend_.size(); i++)
@@ -1141,7 +1102,7 @@ protected:
 						{
 							new_attribute_name << attribute_to_blend_[i]->name().c_str() << 'w' << weights[i] << '+';
 						}
-						blending(*selected_mesh_, attribute_to_blend_, weights);
+						modeling::blending(*selected_mesh_, attribute_to_blend_, weights);
 
 						std::shared_ptr<Attribute<Vec3>> new_attribute = add_attribute<Vec3, Vertex>(
 							*selected_mesh_,
@@ -1155,7 +1116,7 @@ protected:
 
 				if (ImGui::Button("Blend progressif"))
 				{
-					highlight_difference(*selected_mesh_, pos_aus_[1]);
+					//highlight_difference(*selected_mesh_, pos_aus_[1]);
 					start = true;
 				}
 
@@ -1163,7 +1124,7 @@ protected:
 				{
 					std::shared_ptr<Attribute<Vec3>> repos_position =
 						cgogn::get_attribute<Vec3, Vertex>(*selected_mesh_, "AU00");
-					blending(*selected_mesh_, {repos_position}, {weight});
+					modeling::blending(*selected_mesh_, {repos_position}, {weight});
 					start = false;
 					weight = -1.;
 					attribute_to_blend_.clear();
@@ -1178,7 +1139,7 @@ protected:
 				{
 					if (weight < 5.)
 					{
-						blending(*selected_mesh_, {pos_aus_[nb_au]}, {weight});
+						modeling::blending(*selected_mesh_, {pos_aus_[nb_au]}, {weight});
 						weight += 0.003;
 						i++;
 					}
@@ -1201,7 +1162,7 @@ protected:
 						else
 						{
 							weight = 0.;
-							blending(*selected_mesh_, {pos_aus_[nb_au]}, {weight});
+							modeling::blending(*selected_mesh_, {pos_aus_[nb_au]}, {weight});
 							i = 0;
 						}
 					}
@@ -1508,7 +1469,7 @@ protected:
 						name << pos_aus_[nb_rand]->name().c_str() << "+";
 						//highlight_difference(*selected_mesh_, pos_aus_[nb_rand]);
 					}
-					blending(*selected_mesh_, attributes_au_used, weights_used);
+					modeling::blending(*selected_mesh_, attributes_au_used, weights_used);
 					name_mix_au = name.str().substr(0, name.str().size() - 1);
 					incr_nb_test--;
 				}
@@ -1563,9 +1524,9 @@ protected:
 							// for (int i = 1; i < pos_aus_.size(); i++)
 							// {
 							//
-							// 	blending(*selected_mesh_, pos_aus_[i], matrix_jacob(increment_matrix - 1, i - 1));
+							// 	modeling::blending(*selected_mesh_, pos_aus_[i], matrix_jacob(increment_matrix - 1, i - 1));
 							// }
-							//blending(*selected_mesh_, pos_aus_, matrix_jacob.row(increment_matrix - 1));
+							//modeling::blending(*selected_mesh_, pos_aus_, matrix_jacob.row(increment_matrix - 1));
 							increment_matrix++;
 						}
 						else
@@ -1574,9 +1535,9 @@ protected:
 							// for (int i = 1; i < pos_aus_.size(); i++)
 							// {
 							//
-							// 	blending(*selected_mesh_, pos_aus_[i], matrix_jacob(increment_matrix - 1, i - 1));
+							// 	modeling::blending(*selected_mesh_, pos_aus_[i], matrix_jacob(increment_matrix - 1, i - 1));
 							// }
-							//blending(*selected_mesh_, pos_aus_, matrix_jacob.row(increment_matrix - 1));
+							//modeling::blending(*selected_mesh_, pos_aus_, matrix_jacob.row(increment_matrix - 1));
 							if (increment_matrix >= 2)
 							{
 								create_matrix_test_and_jacob(matrix_res_for_jacobian, increment_matrix, resize, false);

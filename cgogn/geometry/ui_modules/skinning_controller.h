@@ -76,7 +76,7 @@ protected:
 
 public:
 	SkinningController(const App& app,
-			const std::string& mesh_bind_position_attribute_unique_name = "bind_vertex_position",
+			const std::string& mesh_bind_position_attribute_unique_name = "AU00",
 			const std::string& skeleton_bind_pose_attribute_unique_name = "bind_bone_inv_world_transform_"
 					+ get_demangled_transform_name()) :
 		Module(app, "SkinningController (" + std::string{mesh_traits<Skeleton>::name}
@@ -381,6 +381,7 @@ protected:
 			show_bone_influence_visualization_controls();
 			ImGui::TreePop();
 		}
+		
 	}
 
 private:

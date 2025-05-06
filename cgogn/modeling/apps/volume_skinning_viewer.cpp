@@ -220,6 +220,7 @@ int main(int argc, char** argv)
     asc_rt.set_time_start();
 
     Surface* sf = nullptr;
+	// A utiliser pour le blending
 
     mp_sf.foreach_mesh([&](Surface& s, const std::string&){
         sm.triangulate_mesh(s,cgogn::get_attribute<Vec3,Vertex2>(s,"position").get());
