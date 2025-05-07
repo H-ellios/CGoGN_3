@@ -102,6 +102,20 @@ target_link_libraries(volume_skinning_viewer
         ${APPLE_LINK}
 )
 
+
+add_executable(volume_skinning_animation_viewer volume_skinning_animation_viewer.cpp)
+target_link_libraries(volume_skinning_animation_viewer
+        cgogn::core
+        cgogn::ui
+        cgogn::io
+        cgogn::rendering
+        cgogn::modeling
+        simpleICP
+        Blossom5
+        ${CMAKE_DL_LIBS}
+        ${APPLE_LINK}
+)
+
 if(APPLE)
 	find_library(CORE_FOUNDATION CoreFoundation)
 	find_library(CARBON Carbon)

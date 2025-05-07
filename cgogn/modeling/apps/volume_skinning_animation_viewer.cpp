@@ -35,7 +35,7 @@
 #include <cgogn/ui/app.h>
 #include <cgogn/ui/view.h>
 
-#include <cgogn/geometry/ui_modules/animation_skeleton_controller.h>
+#include <cgogn/geometry/ui_modules/animation_full_body_controller.h>
 #include <cgogn/rendering/ui_modules/animation_skeleton_render.h>
 #include <cgogn/geometry/ui_modules/skinning_controller.h>
 #include <cgogn/modeling/ui_modules/volume_surface_fitting.h>
@@ -67,8 +67,7 @@ using Scalar = cgogn::geometry::Scalar;
 using RigidTransformation = cgogn::geometry::RigidTransformation<Quaternion, Vec3>;
 using cgogn::geometry::DualQuaternion;
 
-using ASC_RT = cgogn::ui::AnimationSkeletonController<std::vector, double, RigidTransformation>;
-using ASC_DQ = cgogn::ui::AnimationSkeletonController<std::vector, double, DualQuaternion>;
+using ASC_RT = cgogn::ui::AnimationFullBodyController<std::vector, double, RigidTransformation, cgogn::CMap2>;
 
 using KA_RT = cgogn::geometry::KeyframedAnimation<std::vector, double, RigidTransformation>;
 
@@ -144,10 +143,10 @@ int main(int argc, char** argv)
 {
 
     using PropagationDirection = cgogn::ui::SkinnedVolumeSurfaceFitting<Surface, Volume>::PropagationDirection;
-	if (argc < 4)
+	if (argc < 5)
 	{
 		std::cerr << "Wrong number of arguments, requires a mesh path, a weight file path, "
-				"and a FBX file path" << std::endl;
+				",an FBX file path and the folder with the AUs" << std::endl;
 		return 1;
 	}
 
@@ -176,6 +175,8 @@ int main(int argc, char** argv)
 	cgogn::ui::VolumeRender<Volume> vr(app);
 
 	std::string dirname = std::string(DEFAULT_MESH_PATH) + std::string(argv[4]);
+
+	asc_rt.set_directory(dirname);
 
 	app.init_modules();
 
@@ -296,6 +297,12 @@ int main(int argc, char** argv)
     asc_rt.set_animation(rt_bind_attr);
     asc_rt.set_time_start();
 
+    asc_rt.set_vertex_weight_index(wi_s);
+    asc_rt.set_vertex_weight_value(wv_s);
+
+	asc_rt.set_mesh(sf);
+	asc_rt.set_position_attr_name("bind_vertex_position");
+	asc_rt.setup_mesh_attributes();
 
 	return app.launch();
 }

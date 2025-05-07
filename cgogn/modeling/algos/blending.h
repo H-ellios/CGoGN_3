@@ -36,14 +36,18 @@ namespace modeling
 
 using geometry::Vec3;
 
-    
+static bool ends_with(const std::string& str, const std::string& suffix)
+{
+    return str.size() >= suffix.size() && str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
+}
+
 template <typename MESH>
 // Blending function
 // Currently it's a sum of vectors of each different attributes that will be blent
-void blending(MESH& m, std::vector<std::shared_ptr<typename mesh_traits<MESH>::template Attribute<Vec3>>> attributes_to_blend, std::vector<float> weight_list)
+void blending(MESH& m, std::vector<std::shared_ptr<typename mesh_traits<MESH>::template Attribute<Vec3>>> attributes_to_blend, std::vector<float> weight_list , std::string name_attribute_to_change)
 {
     using Vertex = typename mesh_traits<MESH>::Vertex;
-    std::shared_ptr<typename mesh_traits<MESH>::template Attribute<Vec3>> vertex_position = cgogn::get_attribute<Vec3, Vertex>(m, "position");
+    std::shared_ptr<typename mesh_traits<MESH>::template Attribute<Vec3>> vertex_position = cgogn::get_attribute<Vec3, Vertex>(m, name_attribute_to_change);
     std::shared_ptr<typename mesh_traits<MESH>::template Attribute<Vec3>> repos_position = cgogn::get_attribute<Vec3, Vertex>(m, "AU00");
     typename mesh_traits<MESH>::template Attribute<Vec3>* new_vertex_pos_value = vertex_position.get();
     Vec3 diff_distance_repos = Vec3(0, 0, 0);
@@ -75,6 +79,38 @@ void blending(MESH& m, std::vector<std::shared_ptr<typename mesh_traits<MESH>::t
         value<Vec3>(m, vertex_position, v) += result ;
         return true;
     });
+}
+
+template <typename MESH>
+// Function called each frame after clicking on Apply CSV
+// Setup the differents AUs and weights to calculate the frames
+void blending_csv(MESH& m, std::vector<float> weights, int incr, float poids_frame , std::map<std::string, std::vector<float>> csv_ , std::string pos_attr_name, Eigen::MatrixXd csv_weights_detected)
+{
+    using Vertex = typename mesh_traits<MESH>::Vertex;
+
+    std::vector<std::shared_ptr<typename mesh_traits<MESH>::template Attribute<Vec3>>> attributes_csv;
+    std::vector<float> weight_list;
+
+    for (auto& it : csv_)
+    {
+        if (ends_with(it.first, "_r"))
+        {
+            attributes_csv.push_back(
+                cgogn::get_attribute<Vec3, Vertex>(m, it.first.substr(0, it.first.size() - 2)));
+        }
+    }
+    for (int i = 1; i < attributes_csv.size() + 1; i++)
+    {
+        if (incr + 1 < csv_weights_detected.rows())
+        {
+            weight_list.push_back((csv_weights_detected(incr, i - 1) * (1 - poids_frame)) +
+                        (csv_weights_detected(incr + 1, i - 1) * poids_frame));
+        }
+        else
+            weight_list.push_back((csv_weights_detected(incr - 1, i - 1) * (1 - poids_frame)) +
+                        (csv_weights_detected(incr, i - 1) * poids_frame));
+    }
+    modeling::blending(m, attributes_csv, weight_list , pos_attr_name);
 }
 
 } // namespace modeling

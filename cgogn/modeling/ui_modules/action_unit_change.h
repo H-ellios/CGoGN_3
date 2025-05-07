@@ -106,6 +106,12 @@ public:
 		selected_view_ = &v;
 	}
 
+	// No signal system , call this function after you initialized the module
+	void set_position_attr_name(std::string name)
+	{
+		pos_attr_name = name;
+	}
+
 	// Put inside a vector all the files with an extension ext
 	void set_all_paths(std::string root, std::string ext, std::vector<std::string>& paths)
 	{
@@ -229,7 +235,7 @@ public:
 	//
 	void setup_csv_matrix(int incr, std::shared_ptr<Attribute<Vec3>> au, float weight)
 	{
-		modeling::blending(*selected_mesh_, {au}, {weight});
+		modeling::blending(*selected_mesh_, {au}, {weight}, pos_attr_name);
 		if (incr == pos_aus_.size())
 		{
 			std::ostringstream command;
@@ -958,32 +964,32 @@ public:
 
 	// Function called each frame after clicking on Apply CSV
 	// Setup the differents AUs and weights to calculate the frames
-	void blending_csv(std::vector<float> weights, int incr, float poids_frame)
-	{
-		std::vector<std::shared_ptr<Attribute<Vec3>>> attributes_csv;
-		std::vector<float> weight_list;
+	// void blending_csv(std::vector<float> weights, int incr, float poids_frame)
+	// {
+	// 	std::vector<std::shared_ptr<Attribute<Vec3>>> attributes_csv;
+	// 	std::vector<float> weight_list;
 
-		for (auto& it : csv_)
-		{
-			if (ends_with(it.first, "_r"))
-			{
-				attributes_csv.push_back(
-					cgogn::get_attribute<Vec3, Vertex>(*selected_mesh_, it.first.substr(0, it.first.size() - 2)));
-			}
-		}
-		for (int i = 1; i < pos_aus_.size(); i++)
-		{
-			if (incr + 1 < csv_weights_detected_.rows())
-			{
-				weight_list.push_back((csv_weights_detected_(incr, i - 1) * (1 - poids_frame)) +
-						 (csv_weights_detected_(incr + 1, i - 1) * poids_frame));
-			}
-			else
-				weight_list.push_back((csv_weights_detected_(incr - 1, i - 1) * (1 - poids_frame)) +
-						 (csv_weights_detected_(incr, i - 1) * poids_frame));
-		}
-		modeling::blending(*selected_mesh_, attributes_csv, weight_list);
-	}
+	// 	for (auto& it : csv_)
+	// 	{
+	// 		if (ends_with(it.first, "_r"))
+	// 		{
+	// 			attributes_csv.push_back(
+	// 				cgogn::get_attribute<Vec3, Vertex>(*selected_mesh_, it.first.substr(0, it.first.size() - 2)));
+	// 		}
+	// 	}
+	// 	for (int i = 1; i < pos_aus_.size(); i++)
+	// 	{
+	// 		if (incr + 1 < csv_weights_detected_.rows())
+	// 		{
+	// 			weight_list.push_back((csv_weights_detected_(incr, i - 1) * (1 - poids_frame)) +
+	// 					 (csv_weights_detected_(incr + 1, i - 1) * poids_frame));
+	// 		}
+	// 		else
+	// 			weight_list.push_back((csv_weights_detected_(incr - 1, i - 1) * (1 - poids_frame)) +
+	// 					 (csv_weights_detected_(incr, i - 1) * poids_frame));
+	// 	}
+	// 	modeling::blending(*selected_mesh_, attributes_csv, weight_list , pos_attr_name);
+	// }
 
 	// Compute the distance between points in the starting configuration and the end configuration for the interpolation
 	// algorithm
@@ -1102,7 +1108,7 @@ protected:
 						{
 							new_attribute_name << attribute_to_blend_[i]->name().c_str() << 'w' << weights[i] << '+';
 						}
-						modeling::blending(*selected_mesh_, attribute_to_blend_, weights);
+						modeling::blending(*selected_mesh_, attribute_to_blend_, weights , pos_attr_name);
 
 						std::shared_ptr<Attribute<Vec3>> new_attribute = add_attribute<Vec3, Vertex>(
 							*selected_mesh_,
@@ -1124,7 +1130,7 @@ protected:
 				{
 					std::shared_ptr<Attribute<Vec3>> repos_position =
 						cgogn::get_attribute<Vec3, Vertex>(*selected_mesh_, "AU00");
-					modeling::blending(*selected_mesh_, {repos_position}, {weight});
+					modeling::blending(*selected_mesh_, {repos_position}, {weight} , pos_attr_name);
 					start = false;
 					weight = -1.;
 					attribute_to_blend_.clear();
@@ -1139,7 +1145,7 @@ protected:
 				{
 					if (weight < 5.)
 					{
-						modeling::blending(*selected_mesh_, {pos_aus_[nb_au]}, {weight});
+						modeling::blending(*selected_mesh_, {pos_aus_[nb_au]}, {weight} , pos_attr_name);
 						weight += 0.003;
 						i++;
 					}
@@ -1162,7 +1168,7 @@ protected:
 						else
 						{
 							weight = 0.;
-							modeling::blending(*selected_mesh_, {pos_aus_[nb_au]}, {weight});
+							modeling::blending(*selected_mesh_, {pos_aus_[nb_au]}, {weight} , pos_attr_name);
 							i = 0;
 						}
 					}
@@ -1225,7 +1231,7 @@ protected:
 
 				if (incr < count_timer_csv)
 				{
-					blending_csv(weights, incr, poids_frame);
+					modeling::blending_csv(*selected_mesh_, weights, incr, poids_frame, csv_ , pos_attr_name, csv_weights_detected_);
 					timer = ui::App::frame_time_ - time_start;
 
 					while ((timer > timestamp_csv_[incr]) && (incr < count_timer_csv))
@@ -1469,7 +1475,7 @@ protected:
 						name << pos_aus_[nb_rand]->name().c_str() << "+";
 						//highlight_difference(*selected_mesh_, pos_aus_[nb_rand]);
 					}
-					modeling::blending(*selected_mesh_, attributes_au_used, weights_used);
+					modeling::blending(*selected_mesh_, attributes_au_used, weights_used , pos_attr_name);
 					name_mix_au = name.str().substr(0, name.str().size() - 1);
 					incr_nb_test--;
 				}
@@ -1569,6 +1575,8 @@ private:
 	std::vector<std::string> path_aus_;
 	std::vector<std::string> path_csv_;
 	std::string directory_;
+	std::string pos_attr_name;
+
 	std::map<std::string, std::vector<float>> csv_;
 	Eigen::MatrixXd csv_weights_detected_;
 	Eigen::MatrixXd csv_weights_confirm_;

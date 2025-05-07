@@ -121,6 +121,7 @@ int main(int argc, char** argv)
 	std::shared_ptr<Attribute<Vec3>> vertex_distance = cgogn::add_attribute<Vec3, Vertex>(*m_pos, "distance");
 
 	auc.set_mesh(*m_pos,vertex_position);
+	auc.set_position_attr_name("position");
 	auc.set_to_blue(*m_pos);
 	auc.set_attribute(*m_pos,vertex_position.get(),"position_interpolation",1.);
 	auc.set_attribute(*m_pos,vertex_position.get(),"distance",1.);
