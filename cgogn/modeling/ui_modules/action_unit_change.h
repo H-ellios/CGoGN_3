@@ -1092,7 +1092,7 @@ protected:
 
 				static bool start = false;
 				static int i = 0;
-				static int nb_au = 8;
+				static int nb_au = 2;
 				if (attribute_to_blend_.size() != 0)
 				{
 					for (int i = 0; i < attribute_to_blend_.size(); i++)

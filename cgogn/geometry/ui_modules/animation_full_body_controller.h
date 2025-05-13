@@ -658,7 +658,6 @@ protected:
 			imgui_combo_attribute<Joint, Vec3>(*selected_skeleton_, selected_joint_position_,
 					"Position", [&](const std::shared_ptr<Attribute<Vec3>>& attribute){ set_joint_position(attribute); });
 
-			static const char* current_item_csv = NULL;
             if (ImGui::BeginCombo("Load CSV", current_item_csv))
             {
                 for (int n = 0; n < path_csv_.size(); n++)
@@ -680,7 +679,7 @@ protected:
                 ImGui::EndCombo();
             }
 			
-			if (selected_animation_ && current_item_csv != NULL)
+			if (selected_animation_)
 				show_time_controls();
 
 			if (ImGui::TreeNode("Advanced"))
@@ -699,54 +698,9 @@ protected:
 				show_bone_color_generation_controls();
 				ImGui::TreePop();
 			}
-
-			static int incr = 0;
-			static float poids_frame = 1.;
-			if (current_item_csv != NULL)
-			{
-				if (ImGui::Button("Apply CSV"))
-				{
-					std::map<std::string, std::vector<float>>::iterator iter = csv_.begin();
-					count_timer_csv = iter->second.size();
-					for (auto& it : csv_)
-					{
-						if (it.first == "timestamp")
-							timestamp_csv_ = it.second;
-					}
-					for (int i = 0; i < timestamp_csv_.size(); i++)
-					{
-						std::cout << timestamp_csv_[i] << std::endl;
-					}
-					incr = 0.;
-					poids_frame = 1.;
-				}
-
-				if (ImGui::Button("Stop CSV"))
-				{
-					incr = count_timer_csv + 1;
-				}
-			}
-
-			if (incr < count_timer_csv)
-			{
-				modeling::blending_csv(*selected_mesh_, weights, incr, poids_frame, csv_ , pos_attr_name, csv_weights_detected_);
-				timer = ui::App::frame_time_ - time_;
-
-				while ((timer > timestamp_csv_[incr]) && (incr < count_timer_csv))
-				{
-					incr++;
-				}
-				if (incr - 1 > 0)
-				{
-					poids_frame =
-						(timer - timestamp_csv_[incr - 1]) / (timestamp_csv_[incr] - timestamp_csv_[incr - 1]);
-				}
-			}
 		}
-
-		static bool start = false;
 		
-		advance_play(start);
+		advance_play(current_item_csv != NULL);
 
         ImGui::Separator();
 
@@ -770,12 +724,11 @@ private:
 		if (play_mode_ == PlayMode::PlayOnce && time_ >= end_time)
 		{
 			set_play_mode(PlayMode::Pause); // shouldn't start playing again if the user rewinds
-			start = false;
 			return; // end already reached
 		}
 
 		TimeT new_time = time_ + time_ratio_ * static_cast<TimeT>(App::frame_time_ - last_frame_time_);
-
+		
 		// If the animation changed to one that starts later,
 		// better to fast-forward to its start than to wait to catch up
 		new_time = std::max(new_time, start_time);
@@ -787,10 +740,48 @@ private:
 			if (root_motion_)
 				root_motion_iteration_id_ += offset / duration;
 			set_time(std::fmod(offset, duration) + start_time);
+			if (previous_new_time > new_time)
+			{
+				nb_loop++;
+			}
 		}
 		else // PlayMode::PlayOnce
 		{
 			set_time(std::min(new_time, end_time));
+		}
+
+		if ((play_mode_ == PlayMode::PlayLooping || play_mode_ == PlayMode::PlayOnce) && start)
+		{
+			if(previous_new_time == 0.){
+				std::map<std::string, std::vector<float>>::iterator iter = csv_.begin();
+				count_timer_csv = iter->second.size();
+				for (auto& it : csv_)
+				{
+					if (it.first == "timestamp")
+						timestamp_csv_ = it.second;
+				}
+				incr_csv = 0;
+				poids_frame = 1.;
+			}
+
+			TimeT csv_time = fmod((new_time + (nb_loop * end_time)) , timestamp_csv_[timestamp_csv_.size() - 1]);
+			incr_csv = incr_csv % (timestamp_csv_.size() - 1);
+
+			modeling::blending_csv(*selected_mesh_, weights, incr_csv, poids_frame, csv_ , pos_attr_name, csv_weights_detected_);
+
+			while ((csv_time > timestamp_csv_[incr_csv]) && (incr_csv < count_timer_csv))
+			{
+				incr_csv++;
+			}
+			if (incr_csv - 1 > 0)
+			{
+				poids_frame =
+					(csv_time - timestamp_csv_[incr_csv - 1]) / (timestamp_csv_[incr_csv] - timestamp_csv_[incr_csv - 1]);
+			}
+		}
+		if (start)
+		{
+			previous_new_time = new_time;
 		}
 	}
 
@@ -862,6 +853,14 @@ private:
 		{
 			root_motion_iteration_id_ = 0;
 			set_time(TimePoint::Start);
+			if (current_item_csv != NULL)
+			{
+				incr_csv = 0;
+				nb_loop = 0;
+				poids_frame = 1;
+			}
+			previous_new_time = 0.;
+			
 		}
 		show_tooltip_for_ui_above("Rewind");
 
@@ -1132,6 +1131,13 @@ public:
 	int count_timer_csv = 0;
 	float64 timer = 0.;
 	float64 time_start = 0.;
+
+	int incr_csv = 0;
+	float poids_frame = 1.;
+	TimeT previous_new_time = 0.;
+	int nb_loop = 0;
+
+	const char* current_item_csv = NULL;
 
     bool jacob_read = false;
 };
