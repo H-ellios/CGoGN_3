@@ -667,17 +667,14 @@ protected:
                                             is_selected))
                     {
                         current_item_csv = path_csv_[n].c_str();
-                        csv_.clear();
-                        timestamp_csv_.clear();
-                        csv_parser(path_csv_[n], ',', csv_weights_detected_, csv_weights_confirm_,
-                                    vector_OF_rest_csv_);
-                        apply_matrix_csv(false);
                     }
                     if (is_selected)
                         ImGui::SetItemDefaultFocus();
                 }
                 ImGui::EndCombo();
             }
+
+			ImGui::Checkbox("Use Confirm Weights ?" , &confirm_weights);
 			
 			if (selected_animation_)
 				show_time_controls();
@@ -700,7 +697,7 @@ protected:
 			}
 		}
 		
-		advance_play(current_item_csv != NULL);
+		advance_play(current_item_csv != NULL , current_item_csv);
 
         ImGui::Separator();
 
@@ -709,7 +706,7 @@ protected:
 
 private:
 	// Sets the time according to the play mode if an animation is selected.
-	void advance_play(bool start)
+	void advance_play(bool start , const char* current_item_csv)
 	{
 		if (!selected_animation_ || play_mode_ == PlayMode::Pause
 				|| !selected_animation_time_extrema_) // no pose
@@ -753,6 +750,12 @@ private:
 		if ((play_mode_ == PlayMode::PlayLooping || play_mode_ == PlayMode::PlayOnce) && start)
 		{
 			if(previous_new_time == 0.){
+				std::string str(current_item_csv);
+				csv_.clear();
+                timestamp_csv_.clear();
+                csv_parser(str, ',', csv_weights_detected_, csv_weights_confirm_,
+                                    vector_OF_rest_csv_);
+				apply_matrix_csv(confirm_weights);
 				std::map<std::string, std::vector<float>>::iterator iter = csv_.begin();
 				count_timer_csv = iter->second.size();
 				for (auto& it : csv_)
@@ -858,6 +861,7 @@ private:
 				incr_csv = 0;
 				nb_loop = 0;
 				poids_frame = 1;
+				modeling::blending(*selected_mesh_,{pos_aus_[0]},{1},pos_attr_name);
 			}
 			previous_new_time = 0.;
 			
@@ -1140,6 +1144,7 @@ public:
 	const char* current_item_csv = NULL;
 
     bool jacob_read = false;
+	bool confirm_weights = false;
 };
 
 } // namespace ui

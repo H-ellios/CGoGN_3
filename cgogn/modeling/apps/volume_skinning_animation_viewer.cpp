@@ -74,6 +74,7 @@ using KA_RT = cgogn::geometry::KeyframedAnimation<std::vector, double, RigidTran
 using namespace cgogn::numerics;
 
 #define DEFAULT_MESH_PATH CGOGN_STR(CGOGN_DATA_PATH) "meshes/"
+#define DEFAULT_ANIMATION_PATH CGOGN_STR(CGOGN_DATA_PATH) "animation/"
 
 // Strips everything preceding and including the last instance of a colon,
 // and if `to_lower_case`, converts the result to lower case (for case-insensitive bone matching)
@@ -190,7 +191,7 @@ int main(int argc, char** argv)
 	v1->link_module(&vr);
 
 	Skeleton* sk{};
-	fbx_io.load_file(argv[3]);
+	fbx_io.load_file(std::string(DEFAULT_ANIMATION_PATH) + std::string(argv[3]));
 	mp_as.foreach_mesh([&](Skeleton& s, const std::string&){ sk = &s; }); // dirty but it does the job of querying the skeleton
 
 	if (!sk)
@@ -200,14 +201,14 @@ int main(int argc, char** argv)
 	}
 
 	std::vector<uint32> vertex_id_after_import;
-	Volume* m = mp.load_volume_from_file(argv[1], &vertex_id_after_import);
+	Volume* m = mp.load_volume_from_file(std::string(DEFAULT_ANIMATION_PATH) + std::string(argv[1]), &vertex_id_after_import);
 	if (!m)
 	{
 		std::cout << "Volume could not be loaded" << std::endl;
 		return 1;
 	}
 
-	if (!load_weights(*sk, *m, vertex_id_after_import, argv[2]))
+	if (!load_weights(*sk, *m, vertex_id_after_import, std::string(DEFAULT_ANIMATION_PATH) + std::string(argv[2])))
 	{
 		std::cout << "Volume weights could not be loaded" << std::endl;
 		return 1;

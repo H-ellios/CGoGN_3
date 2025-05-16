@@ -1186,12 +1186,6 @@ protected:
 											  is_selected))
 						{
 							current_item_csv = path_csv_[n].c_str();
-							csv_.clear();
-							timestamp_csv_.clear();
-							csv_parser(path_csv_[n], ',', csv_weights_detected_, csv_weights_confirm_,
-									   vector_OF_rest_csv_);
-							apply_matrix_csv(false);
-							i = 0;
 						}
 						if (is_selected)
 							ImGui::SetItemDefaultFocus();
@@ -1199,13 +1193,22 @@ protected:
 					ImGui::EndCombo();
 				}
 
+				ImGui::Checkbox("Use Confirm Weights ?" , &confirm_weights);
+
 				static int incr = 0;
 				static int nb_screen = 0;
 				static float poids_frame = 1.;
 				if (current_item_csv != NULL)
 				{
+
 					if (ImGui::Button("Apply CSV"))
 					{
+						csv_.clear();
+						timestamp_csv_.clear();
+						std::string str(current_item_csv);
+						csv_parser(str, ',', csv_weights_detected_, csv_weights_confirm_, vector_OF_rest_csv_);
+						i = 0;
+						apply_matrix_csv(confirm_weights);
 						std::map<std::string, std::vector<float>>::iterator iter = csv_.begin();
 						count_timer_csv = iter->second.size();
 						for (auto& it : csv_)
@@ -1223,9 +1226,10 @@ protected:
 						poids_frame = 1.;
 					}
 
-					if (ImGui::Button("Stop CSV"))
+					if (ImGui::Button("Stop and Clear CSV"))
 					{
 						incr = count_timer_csv + 1;
+						modeling::blending(*selected_mesh_,{pos_aus_[0]},{1},pos_attr_name);
 					}
 				}
 
@@ -1606,6 +1610,7 @@ private:
 	float weight_for_jacob_matrix = 1.5;
 	float epsilon = 0.01;
 	bool jacob_read = false;
+	bool confirm_weights = false;
 };
 
 } // namespace ui
