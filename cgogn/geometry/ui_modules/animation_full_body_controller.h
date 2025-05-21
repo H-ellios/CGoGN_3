@@ -675,6 +675,8 @@ protected:
             }
 
 			ImGui::Checkbox("Use Confirm Weights ?" , &confirm_weights);
+
+			ImGui::Checkbox("Synchronize face and body animation ?" , &synchronize);
 			
 			if (selected_animation_)
 				show_time_controls();
@@ -767,10 +769,19 @@ private:
 				poids_frame = 1.;
 			}
 
-			TimeT csv_time = fmod((new_time + (nb_loop * end_time)) , timestamp_csv_[timestamp_csv_.size() - 1]);
-			incr_csv = incr_csv % (timestamp_csv_.size() - 1);
+			TimeT csv_time = new_time;
 
-			modeling::blending_csv(*selected_mesh_, weights, incr_csv, poids_frame, csv_ , pos_attr_name, csv_weights_detected_);
+			if (synchronize)
+			{
+				csv_time = fmod((new_time + (nb_loop * end_time)) , timestamp_csv_[timestamp_csv_.size() - 1]);
+				incr_csv = incr_csv % (timestamp_csv_.size() - 1);
+			}
+
+			if (!synchronize && previous_new_time > new_time)
+			{
+				incr_csv = 0;
+				poids_frame = 1;
+			}
 
 			while ((csv_time > timestamp_csv_[incr_csv]) && (incr_csv < count_timer_csv))
 			{
@@ -781,6 +792,13 @@ private:
 				poids_frame =
 					(csv_time - timestamp_csv_[incr_csv - 1]) / (timestamp_csv_[incr_csv] - timestamp_csv_[incr_csv - 1]);
 			}
+
+			if (incr_csv < count_timer_csv)
+			{
+				modeling::blending_csv(*selected_mesh_, weights, incr_csv, poids_frame, csv_ , pos_attr_name, csv_weights_detected_);
+			}
+			
+			
 		}
 		if (start)
 		{
@@ -1145,6 +1163,7 @@ public:
 
     bool jacob_read = false;
 	bool confirm_weights = false;
+	bool synchronize = false;
 };
 
 } // namespace ui
