@@ -402,19 +402,60 @@ public:
 		{
 			if (incr == 1)
 			{
-				modeling::blending(*selected_mesh_, {pos_aus_[incr]}, {weight}, pos_attr_name);
+				blending(*selected_mesh_, {pos_aus_[incr]}, {weight});
 				incr++;
 				resize = true;
 			}
 			else
 			{
-				modeling::blending(*selected_mesh_, {pos_aus_[incr]}, {weight}, pos_attr_name);
+				blending(*selected_mesh_, {pos_aus_[incr]}, {weight});
 				create_matrix_test_and_jacob(matrix, incr, resize, false);
 				if (resize)
 					resize = false;
 				incr++;
 			}
 		}
+	}
+
+	// Blending function
+	// Currently it's a sum of vectors of each different attributes that will be blent
+	void blending(MESH& m, std::vector<std::shared_ptr<Attribute<Vec3>>> attributes_to_blend, std::vector<float> weight_list)
+	{
+		std::shared_ptr<Attribute<Vec3>> vertex_position = cgogn::get_attribute<Vec3, Vertex>(m, "position");
+		std::shared_ptr<Attribute<Vec3>> color = cgogn::get_attribute<Vec3, Vertex>(m, "color");
+		std::shared_ptr<Attribute<Vec3>> repos_position = cgogn::get_attribute<Vec3, Vertex>(m, "AU00");
+		Attribute<Vec3>* new_vertex_pos_value = vertex_position.get();
+		Vec3 diff_distance_repos = Vec3(0, 0, 0);
+		float epsilon = 0.0001;
+
+		// need to check if parallel_foreach_cell messes with the calculations 
+		foreach_cell(m, [&](Vertex v) -> bool {
+			value<Vec3>(m, vertex_position, v) = value<Vec3>(m, repos_position, v);
+			Vec3 result = Vec3(0, 0, 0);
+			float nb_au_influence = 0.;
+
+			for (int i = 0; i < attributes_to_blend.size(); i++)
+			{	
+				diff_distance_repos = value<Vec3>(m, attributes_to_blend[i], v) - value<Vec3>(m, repos_position, v);
+				
+				if(abs(diff_distance_repos[0]) > 0. || abs(diff_distance_repos[1]) > 0. || abs(diff_distance_repos[2]) > 0.){
+					nb_au_influence++;
+				}
+				result += diff_distance_repos * weight_list[i];
+			}
+
+			if (nb_au_influence != 0.)
+				result = result / nb_au_influence;
+
+			result[0] = (abs(result[0]) > epsilon) ? result[0] : 0. ; 
+			result[1] = (abs(result[1]) > epsilon) ? result[1] : 0. ;
+			result[2] = (abs(result[2]) > epsilon) ? result[2] : 0. ;
+			
+			value<Vec3>(m, vertex_position, v) += result ;
+			return true;
+		});
+
+		mesh_provider_->emit_attribute_changed(m, new_vertex_pos_value);
 	}
 
 	// Function to calculate the lower bound and upper bound of the jacobian matrix since OpenFace is a neural network
@@ -1467,7 +1508,7 @@ protected:
 			{
 				create_matrix_test_and_jacob(matrix_jacob, matrix_incr, false, true);
 				matrix_incr++;
-				confidence_1 = false;
+				confidence_1 = true;
 				std::cout << "Jacobian Matrix : " << std::endl << matrix_jacob.format(OctaveFmt) << std::endl;
 				std::cout << "Vector from face at rest : " << std::endl << vector_OF_rest_cgogn_ << std::endl;
 			}
@@ -1477,13 +1518,13 @@ protected:
 				{
 					setup_vector_at_rest();
 					matrix_incr++;
-					modeling::blending(*selected_mesh_, {pos_aus_[matrix_incr]}, {weight_for_jacob_matrix}, pos_attr_name);
+					blending(*selected_mesh_, {pos_aus_[matrix_incr]}, {weight_for_jacob_matrix});
 				}
 				else
 				{
+					blending(*selected_mesh_, {pos_aus_[matrix_incr]}, {weight_for_jacob_matrix});
 					if (matrix_incr >= 2)
 					{
-						modeling::blending(*selected_mesh_, {pos_aus_[matrix_incr]}, {weight_for_jacob_matrix}, pos_attr_name);
 						create_matrix_test_and_jacob(matrix_jacob, matrix_incr, false, true);
 					}
 					matrix_incr++;
