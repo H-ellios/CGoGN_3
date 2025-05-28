@@ -457,6 +457,11 @@ public:
 				else
 				{
 					csv_weights_detected_(i, j) = csv_weights_detected_(i, j) + vector_OF_rest_cgogn_(j);
+					
+					if (j == csv_weights_detected_.cols() - 2)
+					{
+						csv_weights_detected_(i,j) = 0; 
+					}
 				}
 			}
 			tmp = matrix_jacob * csv_weights_detected_.row(i).transpose();

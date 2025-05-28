@@ -319,11 +319,33 @@ public:
 				else
 				{
 					csv_weights_detected_(i, j) = csv_weights_detected_(i, j) + vector_OF_rest_cgogn_(j);
+					if (j == csv_weights_detected_.cols() - 2)
+					{
+						csv_weights_detected_(i,j) = 0; 
+					}
+					
 				}
 			}
 			tmp = matrix_jacob * csv_weights_detected_.row(i).transpose();
 			csv_weights_detected_.row(i) = tmp.transpose();
 		}
+
+		std::ofstream outputFile("csv_matrix.txt");
+
+		if (outputFile.is_open())
+		{
+			outputFile << "           ";
+			for (int i = 0; i < pos_aus_.size(); i++)
+			{
+				outputFile << pos_aus_[i]->name().c_str() << "  ";
+			}
+			outputFile << std::endl;
+			for (int i = 0; i < csv_weights_detected_.rows(); i++)
+			{
+				outputFile << "Frame " << i << " : " << csv_weights_detected_.row(i).format(OctaveFmt) << std::endl;
+			}
+		}
+		outputFile.close();
 
 		std::cout << "Matrix of detection : " << std::endl << csv_weights_detected_.format(OctaveFmt) << std::endl;
 	}
@@ -1067,10 +1089,11 @@ public:
 				else
 					validation_file << "Test failed for weight " << weights_validation_aus[i] << " Value : " << au_test_values[i] << " X" << std::endl << "Lower bound : " << value_with_lower_bound << "  Upper bound : " << value_with_upper_bound << std::endl;
 			}
+			validation_file << std::endl; 
 			validation_file << "Number of tests validated : " << tests_validated << std::endl;
 			validation_file << "Total number of tests : " << nb_tests << std::endl;
 			validation_file << "Percentage of tests validated : " << (float(tests_validated) / float(nb_tests)) * 100 << "%" << std::endl;
-			validation_file << "Percentage of tests required for validation : " << (5. / float(nb_tests)) * 100 << "%" << std::endl;
+			validation_file << "Percentage of tests required for validation : " << (5. / float(nb_tests)) * 100 << "%" << std::endl << std::endl;
 
 			if ((float(tests_validated) / float(nb_tests)) < (5. / float(nb_tests)))
 				validation_file << "AU is not valid" << std::endl;
@@ -1234,7 +1257,7 @@ protected:
 		}
 
 		static bool start = false;
-		static int nb_au = 1;
+		static int nb_au = 5;
 		if (attribute_to_blend_.size() != 0)
 		{
 			for (int i = 0; i < attribute_to_blend_.size(); i++)
@@ -1278,17 +1301,12 @@ protected:
 			attribute_to_blend_.clear();
 		}
 
-		if (ImGui::Button("Stop"))
-		{
-			start = false;
-		}
-
 		if (start)
 		{
 			if (weight < 5.)
 			{
 				modeling::blending(*selected_mesh_, {pos_aus_[nb_au]}, {weight} , pos_attr_name);
-				weight += 0.003;
+				weight += 0.005;
 				nb_screenshot++;
 			}
 			else
@@ -1318,7 +1336,7 @@ protected:
 
 		if (start)
 		{
-			take_screenshot(nb_screenshot, pos_aus_[nb_au]->name());
+			//take_screenshot(nb_screenshot, pos_aus_[nb_au]->name());
 		}
 
 		ImGui::Separator();
@@ -1349,7 +1367,6 @@ protected:
 		static float poids_frame = 1.;
 		if (current_item_csv != NULL)
 		{
-
 			if (ImGui::Button("Apply CSV"))
 			{
 				csv_.clear();
@@ -1374,6 +1391,12 @@ protected:
 				incr = 0.;
 				poids_frame = 1.;
 			}
+
+			if (ImGui::Button("Stop"))
+			{
+				incr = count_timer_csv + 1;
+			}
+			
 
 			if (ImGui::Button("Stop and Clear CSV"))
 			{
@@ -1718,8 +1741,8 @@ protected:
 		static int nb_test_screenshot = 0;
 		static int nb_weights = 0;
 		static bool test_start = false;
+		static bool video_format = true;
 
-		static bool video_format = false;
 		ImGui::Checkbox("Use video format ?" , &video_format);
 
 		if (ImGui::Button("Start test validation AUs"))
@@ -1753,10 +1776,10 @@ protected:
 
 			if(nb_test_screenshot >= 0)
 			{
-				modeling::blending(*selected_mesh_,{pos_aus_[nb_au_to_test]} , {weights_validation_aus[nb_test_screenshot]} , pos_attr_name);
+				blending(*selected_mesh_,{pos_aus_[nb_au_to_test]} , {weights_validation_aus[nb_test_screenshot]});
 			}
 			else
-				modeling::blending(*selected_mesh_,{pos_aus_[0]} , {1} , pos_attr_name);
+				blending(*selected_mesh_,{pos_aus_[0]} , {1});
 
 
 			nb_test_screenshot++;
@@ -1783,7 +1806,7 @@ protected:
 				}
 			}
 
-			modeling::blending(*selected_mesh_,{pos_aus_[nb_au_to_test]} , {weights_validation_aus[nb_weights]} , pos_attr_name);
+			blending(*selected_mesh_,{pos_aus_[nb_au_to_test]} , {weights_validation_aus[nb_weights]});
 			nb_weights++;
 		}
 	}
