@@ -43,7 +43,6 @@
 #include <cgogn/modeling/ui_modules/action_unit_change.h>
 #include <cgogn/geometry/ui_modules/surface_differential_properties.h>
 #include <cgogn/rendering/ui_modules/surface_obj_render.h>
-//#include <cgogn/rendering/ui_modules/surface_render.h>
 #include <cgogn/modeling/ui_modules/surface_modeling.h>
 // #include <cgogn/rendering/ui_modules/vector_per_vertex_render.h>
 
@@ -75,12 +74,16 @@ int main(int argc, char** argv)
 	using Scalar = cgogn::geometry::Scalar;
 
 	std::string dirname;
-	if (argc < 2){
-		std::cout << "Folder with files not found" << std::endl;
+	std::string path_openface;
+	if (argc < 4){
+		std::cout << "Please : Folder with AUs , file with texture and OpenFace path" << std::endl;
 		return 1;
 	}
-	else
+	else{
 		dirname = std::string(DEFAULT_MESH_PATH) + std::string(argv[1]);
+		path_openface = std::string(argv[3]);
+	}
+		
 
 	cgogn::thread_start();
 
@@ -91,19 +94,18 @@ int main(int argc, char** argv)
 	cgogn::ui::MeshProvider<Mesh> mp(app);
 	cgogn::ui::ActionUnitChange<Mesh> auc(app);
 	cgogn::ui::SurfaceDifferentialProperties<Mesh> sdp(app);
-	//cgogn::ui::SurfaceRender<Mesh> sr(app);
 	cgogn::ui::SurfaceModeling<Mesh> sm(app);
 	//cgogn::ui::VectorPerVertexRender<Mesh> vpvr(app);
 	cgogn::ui::SurfaceObjRender<Mesh> sor(app);
 
 	auc.set_directory(dirname);
+	auc.set_pathOpenface(path_openface);
 
 	app.init_modules();
 
 	cgogn::ui::View* v1 = app.current_view();
 	v1->link_module(&mp);
 	v1->link_module(&sor);
-	//v1->link_module(&sr);
 	v1->link_module(&auc);
 	//v1->link_module(&vpvr);
 
@@ -151,8 +153,6 @@ int main(int argc, char** argv)
 	else
 		sor.load_texture(std::string(DEFAULT_TEXTURE_PATH) + std::string(argv[2]));
 
-	// sr.set_vertex_position(*v1, *m_pos, vertex_position);
-	// sr.set_vertex_normal(*v1, *m_pos, vertex_normal);
 
 	
 	return app.launch();

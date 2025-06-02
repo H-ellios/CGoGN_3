@@ -41,7 +41,6 @@
 #include <sstream>
 #include <string>
 
-#define PATH_OF_OPENFACE "../../../../OpenFace/build/bin/"
 #define DEFAULT_PATH CGOGN_STR(CGOGN_DATA_PATH) "../../"
 
 namespace fs = std::filesystem;
@@ -91,6 +90,12 @@ public:
 	void set_directory(std::string dirname)
 	{
 		directory_ = dirname;
+	}
+
+	// call this function after you initialized the module
+	void set_pathOpenface(std::string path_openface)
+	{
+		path_openface_ = path_openface;
 	}
 
 	// No signal system , call this function after you initialized the module
@@ -164,7 +169,7 @@ public:
 		name << ".jpg";
 
 		std::ostringstream dirname;
-		dirname << DEFAULT_PATH << "OpenFace/samples/" << dir_of_name << "/";
+		dirname << path_openface_ << "samples/" << dir_of_name << "/";
 
 		selected_view_->save_screenshot_name(name.str());
 		fs::path sourceFile = name.str().c_str();
@@ -264,8 +269,8 @@ public:
 	void setup_vector_at_rest()
 	{
 		std::ostringstream command;
-		command << PATH_OF_OPENFACE << "csv_script_matrix.sh" << " " << DEFAULT_PATH << "OpenFace/samples/Matrix/"
-				<< " " << directory_ << "CSV/" << " " << DEFAULT_PATH << "OpenFace/build/bin/";
+		command << path_openface_ << "build/bin/csv_script_matrix.sh" << " " << path_openface_ << "samples/Matrix/"
+				<< " " << directory_ << "CSV/" << " " << path_openface_ << "build/bin/";
 
 		take_screenshot(0, "Matrix");
 		std::cout << command.str().c_str() << std::endl;
@@ -371,8 +376,8 @@ public:
 	{
 		take_screenshot(0, "test");
 		std::ostringstream command;
-		command << PATH_OF_OPENFACE << "csv_script_matrix.sh" << " " << DEFAULT_PATH << "OpenFace/samples/test/" << " "
-				<< directory_ << "CSV/" << " " << DEFAULT_PATH << "OpenFace/build/bin/" << " "
+		command << path_openface_ << "build/bin/csv_script_matrix.sh" << " " << path_openface_ << "samples/test/" << " "
+				<< directory_ << "CSV/" << " " << path_openface_ << "build/bin/" << " "
 				<< "-python" << " " << DEFAULT_PATH << "CGoGN_3/data/rewrite_csv.py";
 		if (system(command.str().c_str()) == 0)
 		{
@@ -1108,9 +1113,9 @@ public:
 	void parse_video_test_au(std::vector<float>& au_test_values, int nb_au, Eigen::MatrixXd jacobian, Eigen::VectorXd confidence_lower_bound,
 							Eigen::VectorXd confidence_upper_bound){
 		std::ostringstream command;
-		command << PATH_OF_OPENFACE << "csv_script_matrix.sh" << " " << DEFAULT_PATH << "OpenFace/samples/"
-				<< pos_aus_[nb_au]->name().c_str() << "_validation/" << " " << directory_ << "CSV_validation/" << " " << DEFAULT_PATH
-				<< "OpenFace/build/bin/" << " "
+		command << path_openface_ << "build/bin/csv_script_matrix.sh" << " " << path_openface_ << "samples/test/" 
+				<< pos_aus_[nb_au]->name().c_str() << "_validation/" << " " << directory_ << "CSV_validation/" << " " << path_openface_
+				<< "build/bin/" << " "
 				<< "-python" << " " << DEFAULT_PATH << "CGoGN_3/data/rewrite_csv.py";
 		if (system(command.str().c_str()) == 0)
 		{
@@ -1146,9 +1151,9 @@ public:
 	void parse_frame_test_au(std::vector<float>& au_test_values, int nb_au, Eigen::MatrixXd jacobian, Eigen::VectorXd confidence_lower_bound,
 							Eigen::VectorXd confidence_upper_bound){
 		std::ostringstream command;
-		command << PATH_OF_OPENFACE << "csv_script_matrix.sh" << " " << DEFAULT_PATH << "OpenFace/samples/"
-				<< pos_aus_[nb_au]->name().c_str() << "_validation/" << " " << directory_ << "CSV_validation/" << " " << DEFAULT_PATH
-				<< "OpenFace/build/bin/" << " "
+		command << path_openface_ << "build/bin/csv_script_matrix.sh" << " " << path_openface_ << "samples/test/" 
+				<< pos_aus_[nb_au]->name().c_str() << "_validation/" << " " << directory_ << "CSV_validation/" << " " << path_openface_
+				<< "build/bin/" << " "
 				<< "-python" << " " << DEFAULT_PATH << "CGoGN_3/data/rewrite_csv.py";
 		if (system(command.str().c_str()) == 0)
 		{
@@ -1316,8 +1321,8 @@ protected:
 				{
 					start = false;
 					std::ostringstream command;
-					command << PATH_OF_OPENFACE << "csv_script_matrix.sh" << " " << DEFAULT_PATH << "OpenFace/samples/"
-							<< " " << directory_ << "CSV_VIDEO/" << " " << DEFAULT_PATH << "OpenFace/build/bin/"
+					command << path_openface_ << "build/bin/csv_script_matrix.sh" << " " << path_openface_ << "samples/"
+							<< " " << directory_ << "CSV_VIDEO/" << " " << path_openface_ << "build/bin/"
 							<< " "
 							<< "-python" << " " << DEFAULT_PATH << "CGoGN_3/data/parser.py";
 					if (system(command.str().c_str()) == 0)
@@ -1604,9 +1609,9 @@ protected:
 		{
 			take_screenshot(0, name_mix_au);
 			std::ostringstream command;
-			command << PATH_OF_OPENFACE << "csv_script_matrix.sh" << " " << DEFAULT_PATH << "OpenFace/samples/"
-					<< name_mix_au << "/" << " " << directory_ << "CSV/" << " " << DEFAULT_PATH
-					<< "OpenFace/build/bin/" << " "
+			command << path_openface_ << "build/bin/csv_script_matrix.sh" << " " << path_openface_ << "samples/"
+					<< name_mix_au << "/" << " " << directory_ << "CSV/" << " " << path_openface_
+					<< "build/bin/" << " "
 					<< "-python" << " " << DEFAULT_PATH << "CGoGN_3/data/rewrite_csv.py";
 			if (system(command.str().c_str()) == 0)
 			{
@@ -1826,6 +1831,7 @@ private:
 	std::vector<std::string> path_aus_;
 	std::vector<std::string> path_csv_;
 	std::string directory_;
+	std::string path_openface_;
 	std::string pos_attr_name;
 
 	std::map<std::string, std::vector<float>> csv_;
