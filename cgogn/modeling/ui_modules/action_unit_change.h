@@ -29,9 +29,11 @@
 #include <cgogn/ui/module.h>
 
 #include <cgogn/geometry/types/vector_traits.h>
+#include <cgogn/geometry/algos/picking.h>
 #include <thirdparty/rapidcsv/rapidcsv.h>
 
 #include <cgogn/modeling/algos/blending.h>
+#include <cgogn/rendering/shape_drawer.h>
 
 #include <cstring>
 #include <filesystem>
@@ -53,7 +55,9 @@ namespace ui
 
 using geometry::Scalar;
 using geometry::Vec3;
+using geometry::Vec3f;
 using geometry::Vec4;
+using GLMat4 = Eigen::Matrix4f;
 
 const Vec3 GREEN = Vec3(0, 128, 0);
 const Vec3 BLUE = Vec3(0, 0, 255);
@@ -131,6 +135,216 @@ public:
 		std::sort(paths.begin(), paths.end());
 	}
 
+	void generate_scripts(){
+		std::ofstream outputFile("csv_script_matrix.sh");
+		if (outputFile.is_open())
+		{
+			outputFile << "#!/bin/bash\n\n";
+			outputFile << "FDIR=$1\n";
+			outputFile << "OUTDIR=$2\n";
+			outputFile << "EXECDIR=$3\n";
+			outputFile << "ERASE_PYTHON=$4\n";
+			outputFile << "PATH_PYTHON=$5\n\n";
+
+			outputFile << "${EXECDIR}FeatureExtraction -aus -au_static -out_dir ${OUTDIR} -fdir ${FDIR}\n\n";
+
+			outputFile << "if [ \"$ERASE_PYTHON\" == \"-erase\" ]\n";
+			outputFile << "then\n";
+			outputFile << "    rm -rf ${FDIR}*.jpg\n";
+			outputFile << "fi\n\n";
+
+			outputFile << "if [ \"$ERASE_PYTHON\" == \"-python\" ]\n";
+			outputFile << "then\n";
+			outputFile << "    python3 ${PATH_PYTHON} ${OUTDIR}\n";
+			outputFile << "    #rm -rf ${FDIR}*.jpg\n";
+			outputFile << "fi\n";
+		}
+		outputFile.close();
+
+		std::ostringstream command; 
+		command << "cp csv_script_matrix.sh " << path_openface_ << "build/bin/";
+
+		std::cout << command.str() << std::endl;
+
+		if (system(command.str().c_str()) == 0)
+		{
+			std::cout << "Script generated for csv_analysis" << std::endl;
+			command.str("");
+			command.clear();
+
+			command << "chmod +x " << path_openface_ << "build/bin/csv_script_matrix.sh";
+			std::cout << command.str() << std::endl;
+			if (system(command.str().c_str()) != 0)
+				std::cout << "Can't execute the script" << std::endl;
+		}
+
+		std::ofstream landmarkFile("landmark_script.sh");
+		if (landmarkFile.is_open())
+		{
+			landmarkFile << "#!/bin/bash\n\n";
+			landmarkFile << "FDIR=$1\n";
+			landmarkFile << "OUTDIR=$2\n";
+			landmarkFile << "EXECDIR=$3\n";
+			landmarkFile << "ERASE_PYTHON=$4\n";
+			landmarkFile << "PATH_PYTHON=$5\n\n";
+
+			landmarkFile << "${EXECDIR}FaceLandmarkImg -fdir ${FDIR} -out_dir ${OUTDIR} \n\n";
+
+			landmarkFile << "if [ \"$ERASE_PYTHON\" == \"-erase\" ]\n";
+			landmarkFile << "then\n";
+			landmarkFile << "    rm -rf ${FDIR}*.jpg\n";
+			landmarkFile << "fi\n\n";
+
+			landmarkFile << "if [ \"$ERASE_PYTHON\" == \"-python\" ]\n";
+			landmarkFile << "then\n";
+			landmarkFile << "    python3 ${PATH_PYTHON} ${OUTDIR}\n";
+			landmarkFile << "    #rm -rf ${FDIR}*.jpg\n";
+			landmarkFile << "fi\n";
+		}
+		landmarkFile.close();
+		command.str("");
+		command.clear();
+		command << "cp landmark_script.sh " << path_openface_ << "build/bin/";
+
+		if (system(command.str().c_str()) == 0)
+		{
+			std::cout << "Script generated for Landmarks" << std::endl;
+			command.str("");
+			command.clear();
+			command << "chmod +x " << path_openface_ << "build/bin/landmark_script.sh";
+			if (system(command.str().c_str()) != 0)
+				std::cout << "Can't execute the script" << std::endl;
+		}
+	}
+
+	void set_landmarks(){
+		take_screenshot(0,"landmark");
+		std::ostringstream command;
+		command << path_openface_ << "build/bin/landmark_script.sh" << " " << path_openface_ << "samples/landmark/" << " "
+				<< directory_ << "landmark/" << " " << path_openface_ << "build/bin/" << " "
+				<< "-python" << " " << DEFAULT_PATH << "CGoGN_3/data/rewrite_landmark_csv.py";
+		if (system(command.str().c_str()) == 0)
+		{
+			std::cout << "Yes command" << std::endl;
+			std::map<std::string, std::vector<float>> data;
+			command.str("");
+			command.clear();
+			command << directory_ << "landmark/Screenshot_0000.csv";
+			std::string name = command.str().c_str();
+			parser_landmarks(name , ',' , data);
+			create_3D_landmarks(data);
+		}
+		else
+			std::cout << "No command :(" << std::endl;
+	}
+
+	void create_3D_landmarks(std::map<std::string, std::vector<float>>& data){
+		std::vector<int> values_x;
+		std::vector<int> values_y;
+		Vec3 center_of_face_landmark = Vec3(0,0,1.);
+		Vec3 diff = Vec3(0,0,0);
+
+		for (auto& it : data)
+		{
+			if (it.first[0] == 'x'){
+				values_x.push_back(it.second[0]);
+				if (it.first == "x_30")
+					center_of_face_landmark[0] = it.second[0];
+			}
+			else if (it.first[0] == 'y'){
+				values_y.push_back(it.second[0]);
+				if (it.first == "y_30")
+					center_of_face_landmark[1] = it.second[0];
+			}
+		}
+
+		for (int i = 0; i < values_x.size(); i++)
+		{
+			float profondeur = 0.;
+			int nb_to_picked = 0;
+			rendering::GLVec3d near = selected_view_->unproject(values_x[i], values_y[i], 0.0);
+			rendering::GLVec3d far_d = selected_view_->unproject(values_x[i], values_y[i], 1.0);
+			Vec3 A{near.x(), near.y(), near.z()};
+			Vec3 B{far_d.x(), far_d.y(), far_d.z()};
+			std::vector<Vertex> picked;
+			Vec3 pick_value;
+
+			cgogn::geometry::picking(*selected_mesh_, selected_vertex_position_.get(), A, B, picked);
+			if (!picked.empty())
+			{
+				for (int i = 0; i < picked.size(); i++)
+				{
+					pick_value = value<Vec3>(*selected_mesh_,selected_vertex_position_.get(),picked[i]);
+					if (pick_value[2] > profondeur)
+					{
+						profondeur = pick_value[2];
+						nb_to_picked = i;
+					}
+					
+				}
+				landmarks.push_back(picked[nb_to_picked]);
+				pick_value = value<Vec3>(*selected_mesh_,selected_vertex_position_.get(),picked[nb_to_picked]);
+				value_landmarks.push_back(pick_value);
+			}			
+		}
+		influence_areas.resize(landmarks.size());
+	}
+
+	void moving_landmark(MESH& m, int nb_landmark, Vec3 vec_movement){
+		std::shared_ptr<Attribute<Vec3>> vertex_position = cgogn::get_attribute<Vec3, Vertex>(m, "position");
+		Attribute<Vec3>* vertex_pos_value = vertex_position.get();
+		value<Vec3>(m,vertex_pos_value,landmarks[nb_landmark]) += vec_movement;
+		value_landmarks[nb_landmark] += vec_movement;
+	}
+
+	void calculate_area_influence(MESH& m , int size_area){
+		std::vector<std::vector<Vertex>> tmp(landmarks.size());
+		for(int i = 0; i < landmarks.size(); i++)
+		{
+			std::cout << "Area numéro " << i << std::endl;
+			foreach_adjacent_vertex_through_edge(m,landmarks[i],[&](Vertex v) -> bool {
+				if (!((std::find(std::begin(influence_areas[i]) , std::end(influence_areas[i]) , v) != std::end(influence_areas[i])) && (v == landmarks[i])))
+				{
+					influence_areas[i].push_back(v);
+					std::cout << "Index of point " << index_of(*selected_mesh_,influence_areas[i].back()) << std::endl;
+				}
+				return true;
+			});
+		}
+
+		for(int i = 1; i < size_area; i++)
+		{
+			tmp[i].clear();
+			for (int j = 0; j < landmarks.size(); j++)
+			{
+				for (int k = 0; i < influence_areas[j].size(); i++)
+				{
+					foreach_adjacent_vertex_through_edge(m,influence_areas[j][k],[&](Vertex v) -> bool {
+						if (!((std::find(std::begin(influence_areas[j]) , std::end(influence_areas[j]) , v) != std::end(influence_areas[j])) && (v == landmarks[j])))
+						{
+							tmp[j].push_back(v);
+						}
+						return true;
+					});
+				}
+				for (int k = 0; i < tmp[j].size(); i++)
+				{
+					influence_areas[j].push_back(tmp[j][k]);
+				}
+			}
+		}
+
+		for(int i = 0; i < influence_areas.size(); i++)
+		{
+			std::cout << "Area numéro " << i <<  std::endl;
+			auto& vertices = influence_areas[i];
+			for(int j = 0; j < vertices.size(); j++)
+			{
+				std::cout << "ID : " << index_of(*selected_mesh_ , vertices[j]) << std::endl; 
+			}
+		}
+	}
+
 	// Create a new attribute or get an attribute and fill it with data from another attribute
 	void set_attribute(MESH& m, Attribute<Vec3>* to_set, std::string attribute_name, float weight)
 	{
@@ -150,6 +364,10 @@ public:
 		parallel_foreach_cell(m, [&](Vertex v) -> bool {
 			value<Vec3>(m, vertex_pos_value, v) = value<Vec3>(m, au_position, v);
 			tmp = value<Vec3>(m, au_position, v);
+			if (tmp[2] > center_of_face[2])
+			{
+				center_of_face = tmp;
+			}
 			return true;
 		});
 		mesh_provider_->emit_attribute_changed(m, vertex_pos_value);
@@ -288,26 +506,64 @@ public:
 			std::cout << "Command invalid" << std::endl;
 	}
 
-	// Calculate the jacobian matrix for changing space between OpenFace space and CGoGN space
-	// void set_matrix_jacob()
-	// {
-	// 	std::cout << "LA" << std::endl;
-	// 	matrix_jacob.resize(csv_weights_detected_.rows(), csv_weights_detected_.cols());
+	void get_alphas_betas(std::string filename){
+		std::ifstream infile(filename);
+		if (!infile) {
+			std::cerr << "Cannot open file\n";
+			return;
+		}
+		std::string line;
+		while (std::getline(infile, line)) {
+			std::istringstream iss(line);
+			double a, b;
+			if (iss >> a >> b) {
+				alphas.push_back(a);
+				betas.push_back(b);
+			} else {
+				std::cerr << "Malformed line: " << line << '\n';
+			}
+		}
+		infile.close();
+	}
 
-	// 	for (int i = 0; i < csv_weights_detected_.rows(); i++)
-	// 	{
-	// 		for (int j = 0; j < csv_weights_detected_.cols(); j++)
-	// 		{
-	// 			float element_jacob =
-	// 				(csv_weights_detected_(i, j) - vector_OF_rest_cgogn_(j)) / weight_for_jacob_matrix;
-	// 			matrix_jacob(i, j) = ((abs(element_jacob) > epsilon) ? element_jacob : 0);
-	// 		}
-	// 	}
+	void apply_alphas_csv(bool confirm){
 
-	// 	std::cout << "Jacobian Matrix : " << std::endl << matrix_jacob.format(OctaveFmt) << std::endl;
+		std::cout << alphas.size() << std::endl;
+		std::cout << betas.size() << std::endl;
 
-	// 	std::cout << "Vector from face at rest : " << std::endl << vector_OF_rest_cgogn_ << std::endl;
-	// }
+		for (int i = 0; i < csv_weights_detected_.rows(); i++)
+		{
+			for (int j = 0; j < csv_weights_detected_.cols(); j++)
+			{
+				if (csv_weights_confirm_(i, j) == 0 && confirm)
+					csv_weights_detected_(i, j) = 0.;
+				else
+				{
+					if (alphas[j] != 0.)
+						csv_weights_detected_(i, j) = ((csv_weights_detected_(i, j) - vector_OF_rest_cgogn_(j) - betas[j]) / alphas[j]);	
+				}
+			}
+		}
+
+		std::ofstream outputFile("csv_matrix.txt");
+
+		if (outputFile.is_open())
+		{
+			outputFile << "           ";
+			for (int i = 0; i < pos_aus_.size(); i++)
+			{
+				outputFile << pos_aus_[i]->name().c_str() << "  ";
+			}
+			outputFile << std::endl;
+			for (int i = 0; i < csv_weights_detected_.rows(); i++)
+			{
+				outputFile << "Frame " << i << " : " << csv_weights_detected_.row(i).format(OctaveFmt) << std::endl;
+			}
+		}
+		outputFile.close();
+
+		std::cout << "Matrix of detection : " << std::endl << csv_weights_detected_.format(OctaveFmt) << std::endl;
+	}
 
 	// Apply the jacobian Matrix to selected CSV
 	// Can use the confirmation of weights
@@ -323,7 +579,7 @@ public:
 					csv_weights_detected_(i, j) = 0.;
 				else
 				{
-					csv_weights_detected_(i, j) = csv_weights_detected_(i, j) + vector_OF_rest_cgogn_(j);
+					csv_weights_detected_(i, j) = csv_weights_detected_(i, j) - vector_OF_rest_cgogn_(j);
 					if (j == csv_weights_detected_.cols() - 2)
 					{
 						csv_weights_detected_(i,j) = 0; 
@@ -410,6 +666,49 @@ public:
 				}
 			}
 		}
+	}
+
+
+	void rewrite_jacob(Eigen::MatrixXd& matrix){
+		float threshold = 0.5;
+		for (int i = 0; i < matrix.cols(); i++)
+		{
+			if (matrix.col(i).norm() < threshold)
+			{
+				for (int j = 0; j < matrix.rows(); j++)
+				{
+					if (i == j)
+						matrix(j,i) = 1.;
+					else
+					{
+						matrix(j,i) = 0.;
+						matrix(i,j) = 0.;
+					}
+				}
+			}
+		}
+
+		matrix = matrix.transpose().inverse();
+
+		for (int i = 0; i < matrix.cols(); i++)
+		{
+			for (int j = 0; j < matrix.rows(); j++)
+			{
+				if (abs(matrix(i,j)) > 2.2)
+				{
+					if (i == j)
+						matrix(i,j) = 1.;
+					else
+						matrix(i,j) = 0.;
+				}
+			}
+		}
+
+		std::cout << "Jacob Inverse transpose : " << std::endl
+				  << matrix.format(OctaveFmt) << std::endl;
+
+		std::cout << "Jacob matrix : " << std::endl
+					<< matrix.transpose().inverse().format(OctaveFmt) << std::endl;
 	}
 
 	// Function that will take the different screenshots and do the different blendings to calculate test matrices
@@ -808,6 +1107,7 @@ public:
 			outputFile << "Confidence vector lower value  : " << std::endl
 					   << confidence_lower_bound.transpose().format(OctaveFmt) << std::endl;
 			outputFile << "Jacobian Matrix  : " << std::endl << jacobian.format(OctaveFmt) << std::endl;
+			outputFile << "Jacobian transpose inverse Matrix  : " << std::endl << jacobian.transpose().inverse().format(OctaveFmt) << std::endl;
 			outputFile << std::endl;
 
 			outputFile << std::endl;
@@ -835,6 +1135,20 @@ public:
 		std::cout << std::endl;
 		std::cout << "Text has been written to the file " << name << std::endl;
 		outputFile.close();
+	}
+
+	void parser_landmarks(std::string& filename, char separator , std::map<std::string, std::vector<float>>& results ){
+		rapidcsv::Document doc(filename, rapidcsv::LabelParams(0, -1), rapidcsv::SeparatorParams(separator, true));
+		std::vector<std::string> csv_columns_name = doc.GetColumnNames();
+		std::vector<float> tempData;
+		int nb_elem = 0;
+		for (int i = 0; i < csv_columns_name.size(); i++)
+		{
+			std::cout << csv_columns_name[i].c_str() << std::endl;
+			tempData = doc.GetColumn<float>(csv_columns_name[i]);
+			results.emplace(csv_columns_name[i], tempData);
+			tempData.clear();
+		}
 	}
 
 	// Parse a csv using a filename and the separator of the csv
@@ -1197,6 +1511,12 @@ protected:
 		jacob_read = read_jacob_from_file("jacob.txt");
 		if(system("rm -rf validation_au.txt tmp_matrix_file.txt") == 0)
 			std::cout << "removing useless files" << std::endl;
+		generate_scripts();
+		std::ostringstream filename;
+		filename << directory_ << "CSV_VIDEO/slopes.txt";
+		get_alphas_betas(filename.str());
+		shape_ = rendering::ShapeDrawer::instance();
+		shape_->color(rendering::ShapeDrawer::SPHERE) = rendering::GLColor(1., 0., 0., 1);
 	}
 
 	void left_panel() override
@@ -1229,6 +1549,8 @@ protected:
 				left_panel_csv();
 				left_panel_create_and_test_jacob();
 				left_panel_test_AUs();
+				left_panel_landmarks();
+
 			}
 		}
 	}
@@ -1341,7 +1663,7 @@ protected:
 
 		if (start)
 		{
-			//take_screenshot(nb_screenshot, pos_aus_[nb_au]->name());
+			take_screenshot(nb_screenshot, pos_aus_[nb_au]->name());
 		}
 
 		ImGui::Separator();
@@ -1380,6 +1702,31 @@ protected:
 				csv_parser(str, ',', csv_weights_detected_, csv_weights_confirm_, vector_OF_rest_csv_);
 				nb_screenshot = 0;
 				apply_matrix_csv(confirm_weights);
+				std::map<std::string, std::vector<float>>::iterator iter = csv_.begin();
+				count_timer_csv = iter->second.size();
+				for (auto& it : csv_)
+				{
+					if (it.first == "timestamp")
+						timestamp_csv_ = it.second;
+				}
+				for (int i = 0; i < timestamp_csv_.size(); i++)
+				{
+					std::cout << timestamp_csv_[i] << std::endl;
+				}
+
+				time_start = ui::App::frame_time_;
+				incr = 0.;
+				poids_frame = 1.;
+			}
+
+			if (ImGui::Button("Apply CSV (with slopes)"))
+			{
+				csv_.clear();
+				timestamp_csv_.clear();
+				std::string str(current_item_csv);
+				csv_parser(str, ',', csv_weights_detected_, csv_weights_confirm_, vector_OF_rest_csv_);
+				nb_screenshot = 0;
+				apply_alphas_csv(confirm_weights);
 				std::map<std::string, std::vector<float>>::iterator iter = csv_.begin();
 				count_timer_csv = iter->second.size();
 				for (auto& it : csv_)
@@ -1536,6 +1883,7 @@ protected:
 			{
 				create_matrix_test_and_jacob(matrix_jacob, matrix_incr, false, true);
 				matrix_incr++;
+				rewrite_jacob(matrix_jacob);
 				confidence_1 = true;
 				std::cout << "Jacobian Matrix : " << std::endl << matrix_jacob.format(OctaveFmt) << std::endl;
 				std::cout << "Vector from face at rest : " << std::endl << vector_OF_rest_cgogn_ << std::endl;
@@ -1776,13 +2124,10 @@ protected:
 					test_start = false;
 					std::cout << "End of testing , please view validation_au.txt file" << std::endl;
 				}
-				
 			}
 
 			if(nb_test_screenshot >= 0)
-			{
 				blending(*selected_mesh_,{pos_aus_[nb_au_to_test]} , {weights_validation_aus[nb_test_screenshot]});
-			}
 			else
 				blending(*selected_mesh_,{pos_aus_[0]} , {1});
 
@@ -1816,9 +2161,73 @@ protected:
 		}
 	}
 
+	void left_panel_landmarks(){
+		static float movement[] = {0,0,0};
+		static int landmark_to_move = 0;
+		static int size_area = 1;
+		static int nb_landmarks = 0;
+		static bool draw = false;
+		if (landmarks.empty() && jacob_read)
+		{
+			set_landmarks();
+			draw = true;
+			nb_landmarks = landmarks.size();
+		}
+
+		if (draw)
+		{
+			for (int i = 0; i < landmarks.size(); i++)
+			{
+				shape_->color(rendering::ShapeDrawer::SPHERE) = rendering::GLColor(1., 0., 0., 1);
+				Eigen::Affine3f transfo = Eigen::Translation3f(Vec3f(value_landmarks[i][0] , value_landmarks[i][1] , value_landmarks[i][2])) * Eigen::Scaling(radius, radius, radius);
+				shape_->draw(rendering::ShapeDrawer::SPHERE, proj_matrix, view_matrix * transfo.matrix());
+			}
+
+			if (!influence_areas.empty() && (influence_areas.size() != 0))
+			{
+				for (int i = 0; i < influence_areas.size(); i++)
+				{
+					auto& vertices = influence_areas[i];
+					for(int j = 0; j < vertices.size(); j++){
+
+						Vec3 value_vertex = value<Vec3>(*selected_mesh_,selected_vertex_position_.get(),vertices[j]);
+						shape_->color(rendering::ShapeDrawer::SPHERE) = rendering::GLColor(0., 0., float(i)/float(influence_areas.size()), 1);
+						Eigen::Affine3f transfo = Eigen::Translation3f(Vec3f(value_vertex[0] , value_vertex[1] , value_vertex[2])) * Eigen::Scaling(radius, radius, radius);
+						shape_->draw(rendering::ShapeDrawer::SPHERE, proj_matrix, view_matrix * transfo.matrix());
+					}
+				}
+			}
+		}
+	
+		ImGui::Separator();
+		ImGui::SliderFloat("Movement X" ,&movement[0], -0.1, 0.1);
+		ImGui::SliderFloat("Movement Y", &movement[1], -0.1, 0.1);
+		ImGui::SliderFloat("Movement Z", &movement[2], -0.1, 0.1);
+		
+		ImGui::SliderInt("Landmark to move", &landmark_to_move, 0, nb_landmarks);
+		if (ImGui::Button("Apply movement"))
+		{
+			Vec3 vec_movement = Vec3(movement[0],movement[1],movement[2]);
+			moving_landmark(*selected_mesh_,landmark_to_move,vec_movement);
+		}
+
+		ImGui::SliderInt("Size area", &size_area, 1, 5);
+
+		if (ImGui::Button("Calculate area"))
+		{
+			calculate_area_influence(*selected_mesh_,size_area);
+		}
+
+		if (ImGui::Button("Draw"))
+		{
+			draw = !draw;
+		}
+	}
+
 private:
 	MESH* selected_mesh_;
 	View* selected_view_;
+	rendering::ShapeDrawer* shape_;
 	MeshProvider<MESH>* mesh_provider_;
 
 	std::shared_ptr<Attribute<Vec3>> selected_vertex_position_;
@@ -1869,6 +2278,18 @@ private:
 
 	std::vector<float> weights_validation_aus = {0.5 , 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5};
 
+	std::vector<float> alphas = {};
+	std::vector<float> betas = {};
+
+	std::vector<std::vector<Vertex>> influence_areas;
+	std::vector<Vertex> landmarks;
+	std::vector<Vec3> value_landmarks;
+
+	const GLMat4& proj_matrix = selected_view_->projection_matrix();
+	const GLMat4& view_matrix = selected_view_->modelview_matrix();
+	float radius = 0.01;
+
+	Vec3 center_of_face = Vec3(1,1,0);
 };
 
 } // namespace ui

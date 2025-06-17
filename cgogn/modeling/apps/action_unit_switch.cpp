@@ -69,6 +69,7 @@ int main(int argc, char** argv)
 	using Edge = typename cgogn::mesh_traits<Mesh>::Edge;
 	using Face = typename cgogn::mesh_traits<Mesh>::Face;
 
+	using Vec4 = cgogn::geometry::Vec4;
 	using Vec3 = cgogn::geometry::Vec3;
 	using Vec2 = cgogn::geometry::Vec2;
 	using Scalar = cgogn::geometry::Scalar;
