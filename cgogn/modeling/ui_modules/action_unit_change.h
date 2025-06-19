@@ -135,6 +135,7 @@ public:
 		std::sort(paths.begin(), paths.end());
 	}
 
+	// Generate scripts needed to create the jacobian matrix and to get the landmarks position at OpenFace emplacement 
 	void generate_scripts(){
 		std::ofstream outputFile("csv_script_matrix.sh");
 		if (outputFile.is_open())
@@ -217,6 +218,7 @@ public:
 		}
 	}
 
+	// Send a screenshot to Openface and call one of the scripts to get the landmarks used by OpenFace
 	void set_landmarks(){
 		take_screenshot(0,"landmark");
 		std::ostringstream command;
@@ -238,6 +240,8 @@ public:
 			std::cout << "No command :(" << std::endl;
 	}
 
+	// Apply OpenFace landmarks to the face in CGoGN 
+	// Approximated to closest vertex of landmark 
 	void create_3D_landmarks(std::map<std::string, std::vector<float>>& data){
 		std::vector<int> values_x;
 		std::vector<int> values_y;
@@ -279,8 +283,7 @@ public:
 					{
 						profondeur = pick_value[2];
 						nb_to_picked = i;
-					}
-					
+					}	
 				}
 				landmarks.push_back(picked[nb_to_picked]);
 				pick_value = value<Vec3>(*selected_mesh_,selected_vertex_position_.get(),picked[nb_to_picked]);
@@ -290,6 +293,8 @@ public:
 		influence_areas.resize(landmarks.size());
 	}
 
+	// Deplacement of one landmark to a position 
+	// WIP need to move the area of influence of the landmark 
 	void moving_landmark(MESH& m, int nb_landmark, Vec3 vec_movement){
 		std::shared_ptr<Attribute<Vec3>> vertex_position = cgogn::get_attribute<Vec3, Vertex>(m, "position");
 		Attribute<Vec3>* vertex_pos_value = vertex_position.get();
@@ -297,6 +302,9 @@ public:
 		value_landmarks[nb_landmark] += vec_movement;
 	}
 
+	// Get all the adjacent vertex of each landmarks 
+	// Increase number of adcacent vertices with size_area 
+	// WIP Don't work for area > 2
 	void calculate_area_influence(MESH& m , int size_area){
 		std::vector<std::vector<Vertex>> tmp(landmarks.size());
 		for(int i = 0; i < landmarks.size(); i++)
@@ -455,34 +463,6 @@ public:
 		}
 	}
 
-	// Creation of jacobian matrix using sequences of images instead of frame by frame
-	// void setup_csv_matrix(int incr, std::shared_ptr<Attribute<Vec3>> au, float weight)
-	// {
-	// 	modeling::blending(*selected_mesh_, {au}, {weight}, pos_attr_name);
-	// 	if (incr == pos_aus_.size())
-	// 	{
-	// 		std::ostringstream command;
-	// 		command << PATH_OF_OPENFACE << "csv_script_matrix.sh" << " " << DEFAULT_PATH << "OpenFace/samples/Matrix/"
-	// 				<< " " << directory_ << "CSV/" << " " << DEFAULT_PATH << "OpenFace/build/bin/" << " "
-	// 				<< "-python" << " " << DEFAULT_PATH << "CGoGN_3/data/rewrite_csv.py";
-	// 		if (system(command.str().c_str()) == 0)
-	// 		{
-	// 			if (system("rm -rf *.jpg") == 0)
-	// 				std::cout << "Erasing screenshots" << std::endl;
-	// 			else
-	// 				std::cout << "Command invalid" << std::endl;
-
-	// 			std::ostringstream matrix_csv_path;
-	// 			matrix_csv_path << directory_ << "CSV/Matrix.csv";
-	// 			std::string path = matrix_csv_path.str();
-	// 			csv_parser(path, ',', csv_weights_detected_, csv_weights_confirm_, vector_OF_rest_csv_);
-	// 			set_matrix_jacob();
-	// 		}
-	// 		else
-	// 			std::cout << "Command invalid" << std::endl;
-	// 	}
-	// }
-
 	// Define AU00 as vector at rest
 	void setup_vector_at_rest()
 	{
@@ -506,11 +486,12 @@ public:
 			std::cout << "Command invalid" << std::endl;
 	}
 
-	void get_alphas_betas(std::string filename){
+	// Get slopes for each AUs
+	bool get_alphas_betas(std::string filename){
 		std::ifstream infile(filename);
 		if (!infile) {
 			std::cerr << "Cannot open file\n";
-			return;
+			return true;
 		}
 		std::string line;
 		while (std::getline(infile, line)) {
@@ -524,8 +505,10 @@ public:
 			}
 		}
 		infile.close();
+		return false;
 	}
 
+	// Apply slopes to each weights of each AUs for the csv
 	void apply_alphas_csv(bool confirm){
 
 		std::cout << alphas.size() << std::endl;
@@ -535,12 +518,25 @@ public:
 		{
 			for (int j = 0; j < csv_weights_detected_.cols(); j++)
 			{
+				csv_weights_detected_(i,j) -= csv_weights_detected_(0,j);
+
 				if (csv_weights_confirm_(i, j) == 0 && confirm)
 					csv_weights_detected_(i, j) = 0.;
 				else
 				{
+					if (i == 300)
+					{
+						std::cout << "Poids avant slope j =  " << pos_aus_[j+1]->name().c_str() << " " << csv_weights_detected_(i,j) << std::endl;
+					}
+					
 					if (alphas[j] != 0.)
-						csv_weights_detected_(i, j) = ((csv_weights_detected_(i, j) - vector_OF_rest_cgogn_(j) - betas[j]) / alphas[j]);	
+						csv_weights_detected_(i, j) = ((csv_weights_detected_(i, j) - betas[j]) / alphas[j]);
+
+					if (i == 300)
+					{
+						std::cout << "Poids après slope j =  " << pos_aus_[j+1]->name().c_str() << " " << csv_weights_detected_(i,j) << std::endl;
+					}
+						
 				}
 			}
 		}
@@ -562,7 +558,7 @@ public:
 		}
 		outputFile.close();
 
-		std::cout << "Matrix of detection : " << std::endl << csv_weights_detected_.format(OctaveFmt) << std::endl;
+		//std::cout << "Matrix of detection : " << std::endl << csv_weights_detected_.format(OctaveFmt) << std::endl;
 	}
 
 	// Apply the jacobian Matrix to selected CSV
@@ -596,9 +592,9 @@ public:
 		if (outputFile.is_open())
 		{
 			outputFile << "           ";
-			for (int i = 0; i < pos_aus_.size(); i++)
+			for (int i = 1; i < pos_aus_.size(); i++)
 			{
-				outputFile << pos_aus_[i]->name().c_str() << "  ";
+				outputFile << pos_aus_[i]->name().c_str() << "   ";
 			}
 			outputFile << std::endl;
 			for (int i = 0; i < csv_weights_detected_.rows(); i++)
@@ -668,7 +664,8 @@ public:
 		}
 	}
 
-
+	// Set column and row to 0 and diagonal to one if norm of column is inferior to threshold  
+	// Transpose and inverse jacobian matrix 
 	void rewrite_jacob(Eigen::MatrixXd& matrix){
 		float threshold = 0.5;
 		for (int i = 0; i < matrix.cols(); i++)
@@ -1137,6 +1134,7 @@ public:
 		outputFile.close();
 	}
 
+	// Read from a csv file created by openface and get the landmarks positions  
 	void parser_landmarks(std::string& filename, char separator , std::map<std::string, std::vector<float>>& results ){
 		rapidcsv::Document doc(filename, rapidcsv::LabelParams(0, -1), rapidcsv::SeparatorParams(separator, true));
 		std::vector<std::string> csv_columns_name = doc.GetColumnNames();
@@ -1380,6 +1378,7 @@ public:
 		mesh_provider_->emit_attribute_changed(m, interpolation_value);
 	}
 
+	// Write in a txt file the tests from a combinaison of AUs
 	void validation_aus(std::string name , std::vector<float>& au_test_values , int nb_au , Eigen::MatrixXd jacobian , Eigen::VectorXd confidence_lower_bound,
 							Eigen::VectorXd confidence_upper_bound){
 		std::ofstream validation_file;
@@ -1424,6 +1423,7 @@ public:
 		validation_file.close();
 	}
 
+	// Function used when using the video format for testing 
 	void parse_video_test_au(std::vector<float>& au_test_values, int nb_au, Eigen::MatrixXd jacobian, Eigen::VectorXd confidence_lower_bound,
 							Eigen::VectorXd confidence_upper_bound){
 		std::ostringstream command;
@@ -1514,7 +1514,7 @@ protected:
 		generate_scripts();
 		std::ostringstream filename;
 		filename << directory_ << "CSV_VIDEO/slopes.txt";
-		get_alphas_betas(filename.str());
+		do_blending = get_alphas_betas(filename.str());
 		shape_ = rendering::ShapeDrawer::instance();
 		shape_->color(rendering::ShapeDrawer::SPHERE) = rendering::GLColor(1., 0., 0., 1);
 	}
@@ -1575,6 +1575,7 @@ protected:
 					{
 						attribute_to_blend_.push_back(pos_aus_[n]);
 						weights.push_back(1.);
+						apply_weights.push_back(true);
 					}
 				}
 				if (is_selected)
@@ -1583,52 +1584,50 @@ protected:
 			ImGui::EndCombo();
 		}
 
-		static bool start = false;
-		static int nb_au = 5;
+		static int nb_au = 1;
 		if (attribute_to_blend_.size() != 0)
 		{
 			for (int i = 0; i < attribute_to_blend_.size(); i++)
 			{
 				ImGui::SliderFloat(attribute_to_blend_[i]->name().c_str(), &weights[i], -1.0, 5.0);
+				bool apply_weight = apply_weights[i];
+				std::ostringstream identifier;
+				identifier << "Apply " << attribute_to_blend_[i]->name().c_str() << " ?";
+				ImGui::Checkbox(identifier.str().c_str(), &apply_weight);
+				if (apply_weight != apply_weights[i])
+				{
+					apply_weights[i] = !apply_weights[i];
+				}
+				if (!apply_weights[i])
+				{
+					weights[i] = 0;
+				}
 			}
 
 			if (ImGui::Button("Blend"))
 			{
-				std::ostringstream new_attribute_name;
-
-				for (int i = 0; i < attribute_to_blend_.size(); i++)
-				{
-					new_attribute_name << attribute_to_blend_[i]->name().c_str() << 'w' << weights[i] << '+';
-				}
 				modeling::blending(*selected_mesh_, attribute_to_blend_, weights , pos_attr_name);
+			}
 
-				std::shared_ptr<Attribute<Vec3>> new_attribute = add_attribute<Vec3, Vertex>(
-					*selected_mesh_,
-					new_attribute_name.str().substr(0, new_attribute_name.str().size() - 1).c_str());
-
-				// start = true;
+			if (ImGui::Button("Clear"))
+			{
+				std::shared_ptr<Attribute<Vec3>> repos_position =
+					cgogn::get_attribute<Vec3, Vertex>(*selected_mesh_, "AU00");
+				modeling::blending(*selected_mesh_, {repos_position}, {weight} , pos_attr_name);
+				weight = -1.;
 				attribute_to_blend_.clear();
 				weights.clear();
 			}
+			
 		}
 
-		if (ImGui::Button("Blend progressif"))
-		{
-			//highlight_difference(*selected_mesh_, pos_aus_[1]);
-			start = true;
-		}
+		// if (ImGui::Button("Blend progressif"))
+		// {
+		// 	//highlight_difference(*selected_mesh_, pos_aus_[1]);
+		// 	do_blending = true;
+		// }
 
-		if (ImGui::Button("Clear"))
-		{
-			std::shared_ptr<Attribute<Vec3>> repos_position =
-				cgogn::get_attribute<Vec3, Vertex>(*selected_mesh_, "AU00");
-			modeling::blending(*selected_mesh_, {repos_position}, {weight} , pos_attr_name);
-			start = false;
-			weight = -1.;
-			attribute_to_blend_.clear();
-		}
-
-		if (start)
+		if (do_blending)
 		{
 			if (weight < 5.)
 			{
@@ -1641,14 +1640,17 @@ protected:
 				nb_au++;
 				if (nb_au >= pos_aus_.size())
 				{
-					start = false;
+					do_blending = false;
 					std::ostringstream command;
 					command << path_openface_ << "build/bin/csv_script_matrix.sh" << " " << path_openface_ << "samples/"
 							<< " " << directory_ << "CSV_VIDEO/" << " " << path_openface_ << "build/bin/"
 							<< " "
 							<< "-python" << " " << DEFAULT_PATH << "CGoGN_3/data/parser.py";
-					if (system(command.str().c_str()) == 0)
+					if (system(command.str().c_str()) == 0) 
+					{
 						std::cout << "Command succesfully executed" << std::endl;
+						
+					}
 					else
 						std::cout << "Command impossible to execute" << std::endl;
 				}
@@ -1661,7 +1663,7 @@ protected:
 			}
 		}
 
-		if (start)
+		if (do_blending)
 		{
 			take_screenshot(nb_screenshot, pos_aus_[nb_au]->name());
 		}
@@ -1687,13 +1689,13 @@ protected:
 			ImGui::EndCombo();
 		}
 
-		ImGui::Checkbox("Use Confirm Weights ?" , &confirm_weights);
-
 		static int incr = 0;
 		static int nb_screen = 0;
 		static float poids_frame = 1.;
 		if (current_item_csv != NULL)
 		{
+			ImGui::Checkbox("Use Confirm Weights ?" , &confirm_weights);
+
 			if (ImGui::Button("Apply CSV"))
 			{
 				csv_.clear();
@@ -1760,6 +1762,7 @@ protected:
 		if (incr < count_timer_csv)
 		{
 			modeling::blending_csv(*selected_mesh_, weights, incr, poids_frame, csv_ , pos_attr_name, csv_weights_detected_);
+			
 			timer = ui::App::frame_time_ - time_start;
 
 			while ((timer > timestamp_csv_[incr]) && (incr < count_timer_csv))
@@ -1783,79 +1786,82 @@ protected:
 
 		ImGui::Separator();
 
-		static const char* current_item_start = NULL;
-		if (ImGui::BeginCombo(
-				"Interpolation shape start",
-				current_item_start)) // The second parameter is the label previewed before opening the combo.
-		{
+		// Interpolation between two faces 
+		// Not that useful 
 
-			for (int n = 0; n < pos_aus_.size(); n++)
-			{
-				bool is_selected = (current_item_start ==
-									pos_aus_[n]->name().c_str()); // You can store your selection however you
-																	// want, outside or inside your objects
-				if (ImGui::Selectable(pos_aus_[n]->name().c_str(), is_selected))
-				{
-					current_item_start = pos_aus_[n]->name().c_str();
-					au_start = pos_aus_[n].get();
-				}
-				if (is_selected)
-					ImGui::SetItemDefaultFocus(); // You may set the initial focus when opening the combo
-													// (scrolling + for keyboard navigation support)
-			}
-			ImGui::EndCombo();
-		}
+		// static const char* current_item_start = NULL;
+		// if (ImGui::BeginCombo(
+		// 		"Interpolation shape start",
+		// 		current_item_start)) // The second parameter is the label previewed before opening the combo.
+		// {
 
-		if (current_item_start != NULL)
-		{
-			ImGui::SliderFloat(au_start->name().c_str(), &weight_start, 0.0, 5.0);
-		}
+		// 	for (int n = 0; n < pos_aus_.size(); n++)
+		// 	{
+		// 		bool is_selected = (current_item_start ==
+		// 							pos_aus_[n]->name().c_str()); // You can store your selection however you
+		// 															// want, outside or inside your objects
+		// 		if (ImGui::Selectable(pos_aus_[n]->name().c_str(), is_selected))
+		// 		{
+		// 			current_item_start = pos_aus_[n]->name().c_str();
+		// 			au_start = pos_aus_[n].get();
+		// 		}
+		// 		if (is_selected)
+		// 			ImGui::SetItemDefaultFocus(); // You may set the initial focus when opening the combo
+		// 											// (scrolling + for keyboard navigation support)
+		// 	}
+		// 	ImGui::EndCombo();
+		// }
 
-		static const char* current_item_target = NULL;
-		if (ImGui::BeginCombo(
-				"Interpolation shape target",
-				current_item_target)) // The second parameter is the label previewed before opening the combo.
-		{
+		// if (current_item_start != NULL)
+		// {
+		// 	ImGui::SliderFloat(au_start->name().c_str(), &weight_start, 0.0, 5.0);
+		// }
 
-			for (int n = 0; n < pos_aus_.size(); n++)
-			{
-				bool is_selected = (current_item_target ==
-									pos_aus_[n]->name().c_str()); // You can store your selection however you
-																	// want, outside or inside your objects
-				if (ImGui::Selectable(pos_aus_[n]->name().c_str(), is_selected))
-				{
-					current_item_target = pos_aus_[n]->name().c_str();
-					au_target = pos_aus_[n].get();
-				}
-				if (is_selected)
-					ImGui::SetItemDefaultFocus(); // You may set the initial focus when opening the combo
-													// (scrolling + for keyboard navigation support)
-			}
-			ImGui::EndCombo();
-		}
+		// static const char* current_item_target = NULL;
+		// if (ImGui::BeginCombo(
+		// 		"Interpolation shape target",
+		// 		current_item_target)) // The second parameter is the label previewed before opening the combo.
+		// {
 
-		if (current_item_target != nullptr)
-		{
-			ImGui::SliderFloat(au_target->name().c_str(), &weight_target, 0.0, 5.0);
-		}
+		// 	for (int n = 0; n < pos_aus_.size(); n++)
+		// 	{
+		// 		bool is_selected = (current_item_target ==
+		// 							pos_aus_[n]->name().c_str()); // You can store your selection however you
+		// 															// want, outside or inside your objects
+		// 		if (ImGui::Selectable(pos_aus_[n]->name().c_str(), is_selected))
+		// 		{
+		// 			current_item_target = pos_aus_[n]->name().c_str();
+		// 			au_target = pos_aus_[n].get();
+		// 		}
+		// 		if (is_selected)
+		// 			ImGui::SetItemDefaultFocus(); // You may set the initial focus when opening the combo
+		// 											// (scrolling + for keyboard navigation support)
+		// 	}
+		// 	ImGui::EndCombo();
+		// }
 
-		ImGui::SliderInt("Nb_frames", &nb_frames, 120, 600);
+		// if (current_item_target != nullptr)
+		// {
+		// 	ImGui::SliderFloat(au_target->name().c_str(), &weight_target, 0.0, 5.0);
+		// }
 
-		if (ImGui::Button("Start Interpolation"))
-		{
-			if ((current_item_start != NULL) && (current_item_target != NULL))
-			{
-				set_attribute(*selected_mesh_, au_start, "position_interpolation", weight_start);
-				set_distance(*selected_mesh_, au_start, au_target, weight_start, weight_target);
-				count_interpolation = nb_frames;
-			}
-		}
+		// ImGui::SliderInt("Nb_frames", &nb_frames, 120, 600);
 
-		if (count_interpolation != 0)
-		{
-			interpolation(*selected_mesh_, 1. / nb_frames);
-			count_interpolation--;
-		}
+		// if (ImGui::Button("Start Interpolation"))
+		// {
+		// 	if ((current_item_start != NULL) && (current_item_target != NULL))
+		// 	{
+		// 		set_attribute(*selected_mesh_, au_start, "position_interpolation", weight_start);
+		// 		set_distance(*selected_mesh_, au_start, au_target, weight_start, weight_target);
+		// 		count_interpolation = nb_frames;
+		// 	}
+		// }
+
+		// if (count_interpolation != 0)
+		// {
+		// 	interpolation(*selected_mesh_, 1. / nb_frames);
+		// 	count_interpolation--;
+		// }
 	}
 
 	void left_panel_create_and_test_jacob(){
@@ -1871,13 +1877,8 @@ protected:
 		const float weight_confidence2 = weight_for_jacob_matrix + 0.5;
 		static Eigen::MatrixXd matrix_confidence_1;
 		static Eigen::MatrixXd matrix_confidence_2;
-
-		if (ImGui::Button("Screenshot"))
-		{
-			take_screenshot(0, "test");
-		}
 		
-		if (!jacob_read)
+		if (!jacob_read && !do_blending)
 		{			
 			if (matrix_incr == pos_aus_.size())
 			{
@@ -2017,7 +2018,7 @@ protected:
 
 		ImGui::SliderFloat("Weight for test", &weight_for_test, 0.0, 5.0);
 
-		if (ImGui::Button("Test jacobian"))
+		if (ImGui::Button("Test jacobian with other weight"))
 		{
 			test = true;
 		}
@@ -2026,65 +2027,65 @@ protected:
 			loop_openface(matrix_test_unique_AU, test_incr, resize, weight_for_test, test, true,
 							"./results_test_jacobian.txt");
 
-		static bool test_jacob = false;
-		if (ImGui::Button("Test jacobian matrix"))
-		{
-			test_jacob = true;
-		}
+		// static bool test_jacob = false;
+		// if (ImGui::Button("Test jacobian matrix"))
+		// {
+		// 	test_jacob = true;
+		// }
 
-		if (test_jacob)
-		{
-			static int increment_matrix = 1;
-			static Eigen::MatrixXd matrix_res_for_jacobian;
+		// if (test_jacob)
+		// {
+		// 	static int increment_matrix = 1;
+		// 	static Eigen::MatrixXd matrix_res_for_jacobian;
 
-			if (increment_matrix == pos_aus_.size())
-			{
-				create_matrix_test_and_jacob(matrix_res_for_jacobian, increment_matrix, false, false);
-				test_matrix(matrix_jacob, matrix_res_for_jacobian, 1, "./results_test_jacobian.txt",
-							vector_confidence_lower_bound, vector_confidence_upper_bound, true);
-				test_jacob = false;
-				increment_matrix = 0;
-				std::cout << "Matrix with each line of jacobian used : " << std::endl
-							<< matrix_res_for_jacobian.format(OctaveFmt) << std::endl;
-				std::cout << "Jacobian: " << std::endl << matrix_jacob.format(OctaveFmt) << std::endl;
+		// 	if (increment_matrix == pos_aus_.size())
+		// 	{
+		// 		create_matrix_test_and_jacob(matrix_res_for_jacobian, increment_matrix, false, false);
+		// 		test_matrix(matrix_jacob, matrix_res_for_jacobian, 1, "./results_test_jacobian.txt",
+		// 					vector_confidence_lower_bound, vector_confidence_upper_bound, true);
+		// 		test_jacob = false;
+		// 		increment_matrix = 0;
+		// 		std::cout << "Matrix with each line of jacobian used : " << std::endl
+		// 					<< matrix_res_for_jacobian.format(OctaveFmt) << std::endl;
+		// 		std::cout << "Jacobian: " << std::endl << matrix_jacob.format(OctaveFmt) << std::endl;
 
-				matrix_jacob = matrix_jacob.inverse();
-			}
-			if (increment_matrix < pos_aus_.size())
-			{
-				if (increment_matrix == 1)
-				{
-					matrix_jacob = matrix_jacob.inverse();
+		// 		matrix_jacob = matrix_jacob.inverse();
+		// 	}
+		// 	if (increment_matrix < pos_aus_.size())
+		// 	{
+		// 		if (increment_matrix == 1)
+		// 		{
+		// 			matrix_jacob = matrix_jacob.inverse();
 	
-					// for (int i = 1; i < pos_aus_.size(); i++)
-					// {
-					//
-					// 	modeling::blending(*selected_mesh_, pos_aus_[i], matrix_jacob(increment_matrix - 1, i - 1));
-					// }
-					//modeling::blending(*selected_mesh_, pos_aus_, matrix_jacob.row(increment_matrix - 1));
-					increment_matrix++;
-				}
-				else
-				{
+		// 			// for (int i = 1; i < pos_aus_.size(); i++)
+		// 			// {
+		// 			//
+		// 			// 	modeling::blending(*selected_mesh_, pos_aus_[i], matrix_jacob(increment_matrix - 1, i - 1));
+		// 			// }
+		// 			//modeling::blending(*selected_mesh_, pos_aus_, matrix_jacob.row(increment_matrix - 1));
+		// 			increment_matrix++;
+		// 		}
+		// 		else
+		// 		{
 	
-					// for (int i = 1; i < pos_aus_.size(); i++)
-					// {
-					//
-					// 	modeling::blending(*selected_mesh_, pos_aus_[i], matrix_jacob(increment_matrix - 1, i - 1));
-					// }
-					//modeling::blending(*selected_mesh_, pos_aus_, matrix_jacob.row(increment_matrix - 1));
-					if (increment_matrix >= 2)
-					{
-						create_matrix_test_and_jacob(matrix_res_for_jacobian, increment_matrix, resize, false);
-					}
-					if (resize)
-					{
-						resize = false;
-					}
-					increment_matrix++;
-				}
-			}
-		}
+		// 			// for (int i = 1; i < pos_aus_.size(); i++)
+		// 			// {
+		// 			//
+		// 			// 	modeling::blending(*selected_mesh_, pos_aus_[i], matrix_jacob(increment_matrix - 1, i - 1));
+		// 			// }
+		// 			//modeling::blending(*selected_mesh_, pos_aus_, matrix_jacob.row(increment_matrix - 1));
+		// 			if (increment_matrix >= 2)
+		// 			{
+		// 				create_matrix_test_and_jacob(matrix_res_for_jacobian, increment_matrix, resize, false);
+		// 			}
+		// 			if (resize)
+		// 			{
+		// 				resize = false;
+		// 			}
+		// 			increment_matrix++;
+		// 		}
+		// 	}
+		// }
 
 		ImGui::Separator();
 	}
@@ -2170,7 +2171,7 @@ protected:
 		if (landmarks.empty() && jacob_read)
 		{
 			set_landmarks();
-			draw = true;
+			draw = false;
 			nb_landmarks = landmarks.size();
 		}
 
@@ -2230,66 +2231,80 @@ private:
 	rendering::ShapeDrawer* shape_;
 	MeshProvider<MESH>* mesh_provider_;
 
-	std::shared_ptr<Attribute<Vec3>> selected_vertex_position_;
-	std::vector<std::shared_ptr<Attribute<Vec3>>> pos_aus_;
-	std::vector<std::shared_ptr<Attribute<Vec3>>> attribute_to_blend_;
-
-	Attribute<Vec3>* au_target;
-	Attribute<Vec3>* au_start;
-
-	std::vector<std::string> path_aus_;
-	std::vector<std::string> path_csv_;
-	std::string directory_;
-	std::string path_openface_;
-	std::string pos_attr_name;
-
-	std::map<std::string, std::vector<float>> csv_;
-	Eigen::MatrixXd csv_weights_detected_;
-	Eigen::MatrixXd csv_weights_confirm_;
-
-	Eigen::MatrixXd matrix_jacob;
-	Eigen::MatrixXd matrix_test_unique_AU;
-
-	Eigen::IOFormat OctaveFmt = Eigen::IOFormat(2, 0, ", ", ";\n", "", "", "[", "]");
-	Eigen::IOFormat VectorFmt = Eigen::IOFormat(4, 0, ", ", ";\n", "", "", "[", "]");
-
-	std::vector<float> weights;
-	std::vector<float> timestamp_csv_;
-	std::vector<float> au_test_values;
-
-	Eigen::VectorXd vector_OF_rest_cgogn_;
-	Eigen::VectorXd vector_OF_rest_csv_;
-
-	Eigen::VectorXd vector_confidence_lower_bound;
-	Eigen::VectorXd vector_confidence_upper_bound;
-
-	int nb_frames = 1;
-	float64 timer = 0.;
-	float64 time_start = 0.;
-	int count_interpolation = 0;
-	int count_timer_csv = 0;
-	float weight_start = 1.;
-	float weight_target = 1.;
-	float weight_for_jacob_matrix = 1.5;
-	float epsilon = 0.01;
-	bool jacob_read = false;
-	bool confirm_weights = false;
-	int nb_screenshot = 0;
-
-	std::vector<float> weights_validation_aus = {0.5 , 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5};
-
-	std::vector<float> alphas = {};
-	std::vector<float> betas = {};
-
-	std::vector<std::vector<Vertex>> influence_areas;
-	std::vector<Vertex> landmarks;
-	std::vector<Vec3> value_landmarks;
-
 	const GLMat4& proj_matrix = selected_view_->projection_matrix();
 	const GLMat4& view_matrix = selected_view_->modelview_matrix();
 	float radius = 0.01;
 
+	// For moving landmarks
 	Vec3 center_of_face = Vec3(1,1,0);
+
+	std::shared_ptr<Attribute<Vec3>> selected_vertex_position_;
+	std::vector<std::shared_ptr<Attribute<Vec3>>> pos_aus_;
+	std::vector<std::shared_ptr<Attribute<Vec3>>> attribute_to_blend_;
+	std::vector<float> weights;
+	std::vector<bool> apply_weights; 
+
+	// For interpolation
+	Attribute<Vec3>* au_target;
+	Attribute<Vec3>* au_start;
+	int count_interpolation = 0;
+	float weight_start = 1.;
+	float weight_target = 1.;
+
+	// Paths and directory 
+	std::vector<std::string> path_aus_;
+	std::vector<std::string> path_csv_;
+	std::string directory_;
+	std::string path_openface_;
+
+	std::string pos_attr_name;
+
+	// CSV variables 
+	std::map<std::string, std::vector<float>> csv_;
+	Eigen::MatrixXd csv_weights_detected_;
+	Eigen::MatrixXd csv_weights_confirm_;
+	int nb_frames = 1;
+	float64 timer = 0.;
+	float64 time_start = 0.;
+	int count_timer_csv = 0;
+	bool confirm_weights = false;
+	std::vector<float> timestamp_csv_;
+
+	// Matrices jacobian
+	Eigen::MatrixXd matrix_jacob;
+	Eigen::MatrixXd matrix_test_unique_AU;
+	float weight_for_jacob_matrix = 1.5;
+	float epsilon = 0.01;
+	bool jacob_read = false;
+
+	// Formats to print eigen vectors and matrices
+	Eigen::IOFormat OctaveFmt = Eigen::IOFormat(2, 0, ", ", ";\n", "", "", "[", "]");
+	Eigen::IOFormat VectorFmt = Eigen::IOFormat(4, 0, ", ", ";\n", "", "", "[", "]");
+
+	// Vectors of weights for faces at rest
+	Eigen::VectorXd vector_OF_rest_cgogn_;
+	Eigen::VectorXd vector_OF_rest_csv_;
+
+	// Vectors of validation 
+	Eigen::VectorXd vector_confidence_lower_bound;
+	Eigen::VectorXd vector_confidence_upper_bound;
+	std::vector<float> au_test_values;
+	std::vector<float> weights_validation_aus = {0.5 , 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5};
+
+	// Really important variable for numerotation of screenshots
+	int nb_screenshot = 0;
+
+	
+	// slopes associated with each AUs
+	std::vector<float> alphas = {};
+	std::vector<float> betas = {};
+	bool do_blending = false;
+
+	// Landmarks variables used by OpenFace
+	std::vector<Vertex> landmarks;
+	std::vector<Vec3> value_landmarks;
+	std::vector<std::vector<Vertex>> influence_areas;
+
 };
 
 } // namespace ui

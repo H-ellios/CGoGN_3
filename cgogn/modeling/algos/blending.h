@@ -62,15 +62,16 @@ void blending(MESH& m, std::vector<std::shared_ptr<typename mesh_traits<MESH>::t
         for (int i = 0; i < attributes_to_blend.size(); i++)
         {	
             diff_distance_repos = value<Vec3>(m, attributes_to_blend[i], v) - value<Vec3>(m, repos_position, v);
+            diff_distance_repos *= weight_list[i];
             
             if(abs(diff_distance_repos[0]) > 0. || abs(diff_distance_repos[1]) > 0. || abs(diff_distance_repos[2]) > 0.){
                 nb_au_influence++;
             }
-            result += diff_distance_repos * weight_list[i];
+            result += diff_distance_repos;
         }
 
-        if (nb_au_influence != 0.)
-            result = result / nb_au_influence;
+        // if (nb_au_influence != 0.)
+        //     result = result / nb_au_influence;
 
         result[0] = (abs(result[0]) > epsilon) ? result[0] : 0. ; 
         result[1] = (abs(result[1]) > epsilon) ? result[1] : 0. ;
