@@ -147,7 +147,7 @@ public:
 			outputFile << "ERASE_PYTHON=$4\n";
 			outputFile << "PATH_PYTHON=$5\n\n";
 
-			outputFile << "${EXECDIR}FeatureExtraction -aus -au_static -out_dir ${OUTDIR} -fdir ${FDIR}\n\n";
+			outputFile << "${EXECDIR}FeatureExtraction -aus -out_dir ${OUTDIR} -fdir ${FDIR}\n\n";
 
 			outputFile << "if [ \"$ERASE_PYTHON\" == \"-erase\" ]\n";
 			outputFile << "then\n";
@@ -174,6 +174,64 @@ public:
 			command.clear();
 
 			command << "chmod +x " << path_openface_ << "build/bin/csv_script_matrix.sh";
+			std::cout << command.str() << std::endl;
+			if (system(command.str().c_str()) != 0)
+				std::cout << "Can't execute the script" << std::endl;
+		}
+
+		std::ofstream blendingFile("progressive_blending.sh");
+		if (blendingFile.is_open())
+		{
+			blendingFile << "#!/bin/bash\n\n";
+			blendingFile << "FDIR=$1\n";
+			blendingFile << "OUTDIR=$2\n";
+			blendingFile << "EXECDIR=$3\n";
+			blendingFile << "ERASE_PYTHON=$4\n";
+			blendingFile << "PATH_PYTHON=$5\n";
+			blendingFile << "DYNAMIC=$6\n\n";
+
+			blendingFile << "AU=(\"AU01\" \"AU02\" \"AU04\" \"AU05\" \"AU06\" \"AU07\" \"AU09\" \"AU10\" \"AU12\" \"AU14\" \"AU15\" \"AU17\" \"AU20\" \"AU23\" \"AU25\" \"AU26\" \"AU45\") \n";
+
+			blendingFile << "if [ \"$DYNAMIC\" == \"-dynamic\" ]\n";
+			blendingFile << "then\n";
+			blendingFile << "	for au in \"${AU[@]}\"; do \n";
+			blendingFile << "		tmp=$au\n";
+			blendingFile << "		# ${EXECDIR}FeatureExtraction -aus -out_dir ${OUTDIR} -fdir ${FDIR}${tmp}/\n\n";
+			blendingFile << "		${EXECDIR}FeatureExtraction -aus -au_static -out_dir ${OUTDIR} -fdir ${FDIR}${tmp}/ -of ${tmp}_static\n\n";
+			blendingFile << "	done\n";
+			blendingFile << "else\n";
+			blendingFile << "	for au in \"${AU[@]}\"; do \n";
+			blendingFile << "		tmp=$au\n";
+			blendingFile << "		${EXECDIR}FeatureExtraction -aus -au_static -out_dir ${OUTDIR} -fdir ${FDIR}${tmp}/\n\n";
+			blendingFile << "	done\n";
+			blendingFile << "fi\n";
+
+			blendingFile << "if [ \"$ERASE_PYTHON\" == \"-erase\" ]\n";
+			blendingFile << "then\n";
+			blendingFile << "    rm -rf ${FDIR}*.jpg\n";
+			blendingFile << "fi\n\n";
+
+			blendingFile << "if [ \"$ERASE_PYTHON\" == \"-python\" ]\n";
+			blendingFile << "then\n";
+			blendingFile << "    python3 ${PATH_PYTHON} ${OUTDIR}\n";
+			blendingFile << "    #rm -rf ${FDIR}*.jpg\n";
+			blendingFile << "fi\n";
+		}
+		blendingFile.close();
+
+		command.str("");
+		command.clear();
+		command << "cp progressive_blending.sh " << path_openface_ << "build/bin/";
+
+		std::cout << command.str() << std::endl;
+
+		if (system(command.str().c_str()) == 0)
+		{
+			std::cout << "Script generated for progressive_blending" << std::endl;
+			command.str("");
+			command.clear();
+
+			command << "chmod +x " << path_openface_ << "build/bin/progressive_blending.sh";
 			std::cout << command.str() << std::endl;
 			if (system(command.str().c_str()) != 0)
 				std::cout << "Can't execute the script" << std::endl;
@@ -494,14 +552,35 @@ public:
 			return true;
 		}
 		std::string line;
-		while (std::getline(infile, line)) {
-			std::istringstream iss(line);
-			double a, b;
-			if (iss >> a >> b) {
-				alphas.push_back(a);
-				betas.push_back(b);
-			} else {
-				std::cerr << "Malformed line: " << line << '\n';
+		if (infile.is_open())
+		{
+			int jacob_nb_rows = 0;
+			infile >> jacob_nb_rows;
+			alphas.resize(jacob_nb_rows, jacob_nb_rows);
+			betas.resize(jacob_nb_rows, jacob_nb_rows);
+
+			for (int i = 0; i < jacob_nb_rows; i++)
+			{
+				for (int j = 0; j < jacob_nb_rows; j++)
+				{
+					infile >> alphas(i, j);
+					if (i != j)
+					{
+						alphas(i,j) = 0;
+					}
+				}
+			}
+
+			for (int i = 0; i < jacob_nb_rows; i++)
+			{
+				for (int j = 0; j < jacob_nb_rows; j++)
+				{
+					infile >> betas(i, j);
+					if (i != j)
+					{
+						betas(i,j) = 0;
+					}
+				}
 			}
 		}
 		infile.close();
@@ -519,6 +598,11 @@ public:
 			for (int j = 0; j < csv_weights_detected_.cols(); j++)
 			{
 				csv_weights_detected_(i,j) -= csv_weights_detected_(0,j);
+				if (j == csv_weights_detected_.cols() - 1)
+				{
+					csv_weights_detected_(i,j) /= 1.5;
+				}
+				
 
 				if (csv_weights_confirm_(i, j) == 0 && confirm)
 					csv_weights_detected_(i, j) = 0.;
@@ -529,8 +613,8 @@ public:
 						std::cout << "Poids avant slope j =  " << pos_aus_[j+1]->name().c_str() << " " << csv_weights_detected_(i,j) << std::endl;
 					}
 					
-					if (alphas[j] != 0.)
-						csv_weights_detected_(i, j) = ((csv_weights_detected_(i, j) - betas[j]) / alphas[j]);
+					if (alphas(j,j) != 0.)
+						csv_weights_detected_(i, j) = ((csv_weights_detected_(i, j) - betas(j,j)) / (alphas(j,j) * 1.5));
 
 					if (i == 300)
 					{
@@ -1584,7 +1668,6 @@ protected:
 			ImGui::EndCombo();
 		}
 
-		static int nb_au = 1;
 		if (attribute_to_blend_.size() != 0)
 		{
 			for (int i = 0; i < attribute_to_blend_.size(); i++)
@@ -1627,12 +1710,13 @@ protected:
 		// 	do_blending = true;
 		// }
 
+		static int nb_au = 1;
 		if (do_blending)
 		{
 			if (weight < 5.)
 			{
-				modeling::blending(*selected_mesh_, {pos_aus_[nb_au]}, {weight} , pos_attr_name);
-				weight += 0.005;
+				blending(*selected_mesh_, {pos_aus_[nb_au]}, {weight});
+				weight += 0.003;
 				nb_screenshot++;
 			}
 			else
@@ -1642,10 +1726,11 @@ protected:
 				{
 					do_blending = false;
 					std::ostringstream command;
-					command << path_openface_ << "build/bin/csv_script_matrix.sh" << " " << path_openface_ << "samples/"
+					command << path_openface_ << "build/bin/progressive_blending.sh" << " " << path_openface_ << "samples/"
 							<< " " << directory_ << "CSV_VIDEO/" << " " << path_openface_ << "build/bin/"
 							<< " "
-							<< "-python" << " " << DEFAULT_PATH << "CGoGN_3/data/parser.py";
+							<< "-python" << " " << DEFAULT_PATH << "CGoGN_3/data/jacob.py"
+							<< " -static";
 					if (system(command.str().c_str()) == 0) 
 					{
 						std::cout << "Command succesfully executed" << std::endl;
@@ -1657,7 +1742,7 @@ protected:
 				else
 				{
 					weight = 0.;
-					modeling::blending(*selected_mesh_, {pos_aus_[nb_au]}, {weight} , pos_attr_name);
+					blending(*selected_mesh_, {pos_aus_[nb_au]}, {weight});
 					nb_screenshot = 0;
 				}
 			}
@@ -2296,8 +2381,8 @@ private:
 
 	
 	// slopes associated with each AUs
-	std::vector<float> alphas = {};
-	std::vector<float> betas = {};
+	Eigen::MatrixXd alphas;
+	Eigen::MatrixXd betas;
 	bool do_blending = false;
 
 	// Landmarks variables used by OpenFace

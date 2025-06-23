@@ -102,14 +102,34 @@ void blending_csv(MESH& m, std::vector<float> weights, int incr, float poids_fra
     }
     for (int i = 1; i < attributes_csv.size() + 1; i++)
     {
-        if (incr + 1 < csv_weights_detected.rows())
+        float weight_attribute;
+        if (incr < 11)
         {
             weight_list.push_back((csv_weights_detected(incr, i - 1) * (1 - poids_frame)) +
                         (csv_weights_detected(incr + 1, i - 1) * poids_frame));
         }
-        else
-            weight_list.push_back((csv_weights_detected(incr - 1, i - 1) * (1 - poids_frame)) +
-                        (csv_weights_detected(incr, i - 1) * poids_frame));
+        else 
+        {
+            float weight_smooth = 0;
+            int j = 1;
+            for(; j < 10 ; j++)
+            {
+                weight_smooth += csv_weights_detected(incr - j, i - 1);
+            }
+
+            if (incr + 1 < csv_weights_detected.rows())
+            {
+                weight_smooth += (csv_weights_detected(incr, i - 1) * (1 - poids_frame)) + (csv_weights_detected(incr + 1, i - 1) * poids_frame);
+                weight_smooth = weight_smooth/float(j);
+                weight_list.push_back(weight_smooth);
+            }
+            else
+            {
+                weight_smooth += (csv_weights_detected(incr - 1, i - 1) * (1 - poids_frame)) + (csv_weights_detected(incr, i - 1) * poids_frame);
+                weight_smooth = weight_smooth/float(j);
+                weight_list.push_back(weight_smooth);
+            }
+        }
     }
     modeling::blending(m, attributes_csv, weight_list , pos_attr_name);
 }
