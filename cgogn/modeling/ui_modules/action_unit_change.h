@@ -1637,9 +1637,7 @@ protected:
 
 			if (selected_vertex_position_)
 			{
-				std::cout << "ICI 3" << std::endl;
 				change_to_selected_au(*selected_mesh_, selected_vertex_position_.get());
-				std::cout << "ICI 4" << std::endl;
 				if (!exec_mode_)
 				{
 					left_panel_blending();
@@ -1687,8 +1685,10 @@ protected:
 		if (attribute_to_blend_.size() != 0)
 		{
 			for (int i = 0; i < attribute_to_blend_.size(); i++)
-			{
-				ImGui::SliderFloat(attribute_to_blend_[i]->name().c_str(), &weights[i], -1.0, 5.0);
+			{				
+				if(ImGui::SliderFloat(attribute_to_blend_[i]->name().c_str(), &weights[i], -1.0, 5.0))
+					modeling::blending(*selected_mesh_, attribute_to_blend_, weights , pos_attr_name);
+
 				bool apply_weight = apply_weights[i];
 				std::ostringstream identifier;
 				identifier << "Apply " << attribute_to_blend_[i]->name().c_str() << " ?";
@@ -1773,8 +1773,7 @@ protected:
 	}
 
 	void left_panel_csv(){
-		const char* current_item_csv = NULL;
-		std::cout << "ICI 5" << std::endl;
+		static const char* current_item_csv = NULL;
 		if (!exec_mode_)
 		{
 			if (ImGui::BeginCombo("Load CSV", current_item_csv))
@@ -1795,7 +1794,7 @@ protected:
 		}
 		else
 			current_item_csv = exec_csv_name.c_str();
-			
+
 		static int incr = 0;
 		static int nb_screen = 0;
 		static float poids_frame = 1.;
@@ -1849,7 +1848,6 @@ protected:
 				poids_frame = 1.;
 			}
 
-			std::cout << "ICI 8" << std::endl;
 			if (use_exec_mode_)
 			{
 				use_exec_mode_ = false;
