@@ -77,7 +77,7 @@ int main(int argc, char** argv)
 	std::string dirname;
 	std::string path_openface;
 	if (argc < 4){
-		std::cout << "Please : Folder with AUs , file with texture and OpenFace path" << std::endl;
+		std::cout << "How to launch : Folder with AUs (based on meshes path) , file with texture (based on meshes path) and OpenFace path\n" << std::endl;
 		return 1;
 	}
 	else{
@@ -129,6 +129,13 @@ int main(int argc, char** argv)
 	auc.set_attribute(*m_pos,vertex_position.get(),"position_interpolation",1.);
 	auc.set_attribute(*m_pos,vertex_position.get(),"distance",1.);
 
+	if (argc == 6)
+	{
+		std::string csv_path_video = argv[4];
+		std::string path_video = argv[5];
+		auc.exec_mode(true,csv_path_video,path_video);
+	}
+
 	sdp.compute_normal(*m_pos, vertex_position.get(), vertex_normal.get());
 
 	mp.set_mesh_bb_vertex_position(*m_pos, vertex_position);
@@ -154,7 +161,7 @@ int main(int argc, char** argv)
 	else
 		sor.load_texture(std::string(DEFAULT_TEXTURE_PATH) + std::string(argv[2]));
 
-
+	std::cout << "ICI 2" << std::endl;
 	
 	return app.launch();
 }

@@ -90,6 +90,15 @@ public:
 		return str.size() >= suffix.size() && str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
 	}
 
+	// 
+	void exec_mode(bool use_exec_mode , std::string name_csv_to_use, std::string path_video)
+	{
+		use_exec_mode_ = use_exec_mode;
+		exec_mode_ = use_exec_mode;
+		exec_csv_name = name_csv_to_use;
+		path_video_ = path_video;
+	}
+
 	// call this function after you initialized the module
 	void set_directory(std::string dirname)
 	{
@@ -1593,7 +1602,7 @@ protected:
 		set_all_paths(directory_, ".obj", path_aus_);
 		set_all_paths(directory_, ".csv", path_csv_);
 		jacob_read = read_jacob_from_file("jacob.txt");
-		if(system("rm -rf validation_au.txt tmp_matrix_file.txt") == 0)
+		if(system("rm -rf *.jpg validation_au.txt tmp_matrix_file.txt") == 0)
 			std::cout << "removing useless files" << std::endl;
 		generate_scripts();
 		std::ostringstream filename;
@@ -1628,12 +1637,19 @@ protected:
 
 			if (selected_vertex_position_)
 			{
+				std::cout << "ICI 3" << std::endl;
 				change_to_selected_au(*selected_mesh_, selected_vertex_position_.get());
-				left_panel_blending();
-				left_panel_csv();
-				left_panel_create_and_test_jacob();
-				left_panel_test_AUs();
-				left_panel_landmarks();
+				std::cout << "ICI 4" << std::endl;
+				if (!exec_mode_)
+				{
+					left_panel_blending();
+					left_panel_csv();
+					left_panel_create_and_test_jacob();
+					left_panel_test_AUs();
+					left_panel_landmarks();
+				}
+				else
+					left_panel_csv();
 
 			}
 		}
@@ -1757,23 +1773,29 @@ protected:
 	}
 
 	void left_panel_csv(){
-		static const char* current_item_csv = NULL;
-		if (ImGui::BeginCombo("Load CSV", current_item_csv))
+		const char* current_item_csv = NULL;
+		std::cout << "ICI 5" << std::endl;
+		if (!exec_mode_)
 		{
-			for (int n = 0; n < path_csv_.size(); n++)
+			if (ImGui::BeginCombo("Load CSV", current_item_csv))
 			{
-				bool is_selected = (current_item_csv == path_csv_[n].c_str());
-				if (ImGui::Selectable(path_csv_[n].substr(directory_.size(), path_csv_[n].size()).c_str(),
-										is_selected))
+				for (int n = 0; n < path_csv_.size(); n++)
 				{
-					current_item_csv = path_csv_[n].c_str();
+					bool is_selected = (current_item_csv == path_csv_[n].c_str());
+					if (ImGui::Selectable(path_csv_[n].substr(directory_.size(), path_csv_[n].size()).c_str(),
+											is_selected))
+					{
+						current_item_csv = path_csv_[n].c_str();
+					}
+					if (is_selected)
+						ImGui::SetItemDefaultFocus();
 				}
-				if (is_selected)
-					ImGui::SetItemDefaultFocus();
+				ImGui::EndCombo();
 			}
-			ImGui::EndCombo();
 		}
-
+		else
+			current_item_csv = exec_csv_name.c_str();
+			
 		static int incr = 0;
 		static int nb_screen = 0;
 		static float poids_frame = 1.;
@@ -1821,15 +1843,42 @@ protected:
 					if (it.first == "timestamp")
 						timestamp_csv_ = it.second;
 				}
-				for (int i = 0; i < timestamp_csv_.size(); i++)
-				{
-					std::cout << timestamp_csv_[i] << std::endl;
-				}
 
 				time_start = ui::App::frame_time_;
 				incr = 0.;
 				poids_frame = 1.;
 			}
+
+			std::cout << "ICI 8" << std::endl;
+			if (use_exec_mode_)
+			{
+				use_exec_mode_ = false;
+				csv_.clear();
+				timestamp_csv_.clear();
+				std::string str(current_item_csv);
+				csv_parser(str, ',', csv_weights_detected_, csv_weights_confirm_, vector_OF_rest_csv_);
+				nb_screenshot = 0;
+				apply_alphas_csv(confirm_weights);
+				std::map<std::string, std::vector<float>>::iterator iter = csv_.begin();
+				count_timer_csv = iter->second.size();
+				for (auto& it : csv_)
+				{
+					if (it.first == "timestamp")
+						timestamp_csv_ = it.second;
+				}
+				std::cout << "Ready" << std::endl;
+				time_start = ui::App::frame_time_;
+				incr = 0.;
+				poids_frame = 1.;
+				std::ostringstream command;
+				command << "xdg-open " << path_video_;
+				if (system(command.str().c_str()) == 0)
+				{
+					std::cout << "Command successfully executed" << std::endl;
+				}
+				sleep(0.5);
+			}
+			
 
 			if (ImGui::Button("Stop"))
 			{
@@ -2320,6 +2369,10 @@ private:
 	const GLMat4& view_matrix = selected_view_->modelview_matrix();
 	float radius = 0.01;
 
+	bool use_exec_mode_ = false;
+	bool exec_mode_ = false;
+	std::string path_video_;
+
 	// For moving landmarks
 	Vec3 center_of_face = Vec3(1,1,0);
 
@@ -2346,13 +2399,14 @@ private:
 
 	// CSV variables 
 	std::map<std::string, std::vector<float>> csv_;
+	std::string exec_csv_name;
 	Eigen::MatrixXd csv_weights_detected_;
 	Eigen::MatrixXd csv_weights_confirm_;
 	int nb_frames = 1;
 	float64 timer = 0.;
 	float64 time_start = 0.;
 	int count_timer_csv = 0;
-	bool confirm_weights = false;
+	bool confirm_weights = true;
 	std::vector<float> timestamp_csv_;
 
 	// Matrices jacobian
