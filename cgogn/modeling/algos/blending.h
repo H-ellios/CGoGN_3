@@ -85,7 +85,7 @@ void blending(MESH& m, std::vector<std::shared_ptr<typename mesh_traits<MESH>::t
 template <typename MESH>
 // Function called each frame after clicking on Apply CSV
 // Setup the differents AUs and weights to calculate the frames
-void blending_csv(MESH& m, std::vector<float> weights, int incr, float poids_frame , std::map<std::string, std::vector<float>> csv_ , std::string pos_attr_name, Eigen::MatrixXd csv_weights_detected)
+void blending_csv(MESH& m, int incr, float poids_frame , std::map<std::string, std::vector<float>> csv_ , std::string pos_attr_name, Eigen::MatrixXd csv_weights_detected)
 {
     using Vertex = typename mesh_traits<MESH>::Vertex;
 

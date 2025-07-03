@@ -146,8 +146,8 @@ int main(int argc, char** argv)
     using PropagationDirection = cgogn::ui::SkinnedVolumeSurfaceFitting<Surface, Volume>::PropagationDirection;
 	if (argc < 5)
 	{
-		std::cerr << "Wrong number of arguments, requires a mesh path, a weight file path, "
-				",an FBX file path and the folder with the AUs" << std::endl;
+		std::cerr << "Wrong number of arguments, requires a mesh path (based on animation path), a weight file path (based on animation path), "
+				",an FBX file path (based on animation path) and the folder with the AUs (based on meshes path)" << std::endl;
 		return 1;
 	}
 

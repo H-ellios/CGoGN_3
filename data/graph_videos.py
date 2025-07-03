@@ -12,8 +12,6 @@ onlyfiles = [f for f in listdir(filepath) if isfile(join(filepath, f))]
 
 onlyfiles.sort()
 
-file = open(filepath + "slopes.txt", "w")
-
 for f in onlyfiles : 
     name = basename(f)
     name = name[:-4]

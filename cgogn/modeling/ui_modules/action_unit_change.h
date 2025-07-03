@@ -197,7 +197,8 @@ public:
 			blendingFile << "EXECDIR=$3\n";
 			blendingFile << "ERASE_PYTHON=$4\n";
 			blendingFile << "PATH_PYTHON=$5\n";
-			blendingFile << "DYNAMIC=$6\n\n";
+			blendingFile << "DYNAMIC=$6\n";
+			blendingFile << "OUTDIR_PYTHON=$7\n\n";
 
 			blendingFile << "AU=(\"AU01\" \"AU02\" \"AU04\" \"AU05\" \"AU06\" \"AU07\" \"AU09\" \"AU10\" \"AU12\" \"AU14\" \"AU15\" \"AU17\" \"AU20\" \"AU23\" \"AU25\" \"AU26\" \"AU45\") \n";
 
@@ -205,8 +206,8 @@ public:
 			blendingFile << "then\n";
 			blendingFile << "	for au in \"${AU[@]}\"; do \n";
 			blendingFile << "		tmp=$au\n";
-			blendingFile << "		# ${EXECDIR}FeatureExtraction -aus -out_dir ${OUTDIR} -fdir ${FDIR}${tmp}/\n\n";
-			blendingFile << "		${EXECDIR}FeatureExtraction -aus -au_static -out_dir ${OUTDIR} -fdir ${FDIR}${tmp}/ -of ${tmp}_static\n\n";
+			blendingFile << "		${EXECDIR}FeatureExtraction -aus -out_dir ${OUTDIR} -fdir ${FDIR}${tmp}/\n\n";
+			blendingFile << "		# ${EXECDIR}FeatureExtraction -aus -au_static -out_dir ${OUTDIR} -fdir ${FDIR}${tmp}/ -of ${tmp}_static\n\n";
 			blendingFile << "	done\n";
 			blendingFile << "else\n";
 			blendingFile << "	for au in \"${AU[@]}\"; do \n";
@@ -222,7 +223,7 @@ public:
 
 			blendingFile << "if [ \"$ERASE_PYTHON\" == \"-python\" ]\n";
 			blendingFile << "then\n";
-			blendingFile << "    python3 ${PATH_PYTHON} ${OUTDIR}\n";
+			blendingFile << "    python3 ${PATH_PYTHON} ${OUTDIR_PYTHON}\n";
 			blendingFile << "    #rm -rf ${FDIR}*.jpg\n";
 			blendingFile << "fi\n";
 		}
@@ -573,10 +574,11 @@ public:
 				for (int j = 0; j < jacob_nb_rows; j++)
 				{
 					infile >> alphas(i, j);
-					if (i != j)
+					if ((i == j) && (alphas(i,j) == 0))
 					{
-						alphas(i,j) = 0;
+						alphas(i,j) = 1;
 					}
+					
 				}
 			}
 
@@ -593,21 +595,26 @@ public:
 			}
 		}
 		infile.close();
+		alphas = alphas.transpose().inverse();
+		std::cout << alphas.format(OctaveFmt) << std::endl;
+		std::cout << "Inverse" << std::endl;
 		return false;
 	}
 
 	// Apply slopes to each weights of each AUs for the csv
 	void apply_alphas_csv(bool confirm){
-
-		std::cout << alphas.size() << std::endl;
-		std::cout << betas.size() << std::endl;
+		Eigen::VectorXd tmp;
+		tmp.resize(csv_weights_detected_.cols());
+		Eigen::MatrixXd alphas_inverse;
+		alphas_inverse.resize(alphas.cols(),alphas.cols());
+		alphas_inverse = alphas.transpose().inverse();
 
 		for (int i = 0; i < csv_weights_detected_.rows(); i++)
 		{
 			for (int j = 0; j < csv_weights_detected_.cols(); j++)
 			{
 				csv_weights_detected_(i,j) -= csv_weights_detected_(0,j);
-				if (j == csv_weights_detected_.cols() - 1)
+				if (alphas_inverse(j,j) == 1)
 				{
 					csv_weights_detected_(i,j) /= 1.5;
 				}
@@ -615,43 +622,28 @@ public:
 
 				if (csv_weights_confirm_(i, j) == 0 && confirm)
 					csv_weights_detected_(i, j) = 0.;
-				else
-				{
-					if (i == 300)
-					{
-						std::cout << "Poids avant slope j =  " << pos_aus_[j+1]->name().c_str() << " " << csv_weights_detected_(i,j) << std::endl;
-					}
-					
-					if (alphas(j,j) != 0.)
-						csv_weights_detected_(i, j) = ((csv_weights_detected_(i, j) - betas(j,j)) / (alphas(j,j) * 1.5));
-
-					if (i == 300)
-					{
-						std::cout << "Poids après slope j =  " << pos_aus_[j+1]->name().c_str() << " " << csv_weights_detected_(i,j) << std::endl;
-					}
-						
-				}
+				// else
+				// {
+				// 	if (alphas(j,j) != 0.)
+				// 		csv_weights_detected_(i, j) = ((csv_weights_detected_(i, j) - betas(j,j)) / (alphas(j,j) * 2));	
+				// }
 			}
+			tmp = (csv_weights_detected_.row(i).transpose() - betas) * alphas;
+			csv_weights_detected_.row(i) = tmp.transpose();
 		}
 
-		std::ofstream outputFile("csv_matrix.txt");
+		std::ofstream outputFile("csv_cgogn_weights.csv");
 
 		if (outputFile.is_open())
 		{
-			outputFile << "           ";
-			for (int i = 0; i < pos_aus_.size(); i++)
+			for (int i = 1; i < pos_aus_.size(); i++)
 			{
-				outputFile << pos_aus_[i]->name().c_str() << "  ";
+				outputFile << pos_aus_[i]->name().c_str() << ",";
 			}
 			outputFile << std::endl;
-			for (int i = 0; i < csv_weights_detected_.rows(); i++)
-			{
-				outputFile << "Frame " << i << " : " << csv_weights_detected_.row(i).format(OctaveFmt) << std::endl;
-			}
+			outputFile << csv_weights_detected_.format(CSVFormat);
 		}
 		outputFile.close();
-
-		//std::cout << "Matrix of detection : " << std::endl << csv_weights_detected_.format(OctaveFmt) << std::endl;
 	}
 
 	// Apply the jacobian Matrix to selected CSV
@@ -1516,6 +1508,50 @@ public:
 		validation_file.close();
 	}
 
+	void validation_csv(std::string name , std::string name_csv , Eigen::MatrixXd csv_weights , Eigen::MatrixXd after_cgogn_weights, float epsilon){
+		std::ofstream validation_file;
+		Eigen::VectorXd difference;
+		difference.resize(csv_weights.cols());
+		validation_file.open(name,std::fstream::app);
+		std::cout << "BEGIN" << std::endl; 
+		alphas = alphas.transpose().inverse();
+
+		if (validation_file.is_open())
+		{
+			validation_file << name_csv << std::endl;
+			validation_file << "V means test passed " << std::endl;
+			validation_file << "X means test failed " << std::endl;
+
+			for (int i = 0; i < csv_weights_detected_.rows(); i++)
+			{
+				if (after_cgogn_weights.rows() > i*2)
+				{
+					validation_file << "Row " << i << std::endl;
+					for (int j = 0; j < csv_weights_detected_.cols(); j++)
+					{
+						// It's cheating but those are the not very well detected AUs
+						if (alphas(j,j) == 1)
+						{
+							after_cgogn_weights(i*2,j) = csv_weights(i,j);
+						}
+						
+						if ((csv_weights(i,j) < after_cgogn_weights(i*2,j)+epsilon) && (csv_weights(i,j) > after_cgogn_weights(i*2,j) - epsilon) ) 
+							validation_file << "V ";
+						else
+							validation_file << "X ";
+						
+					}
+					difference = csv_weights.row(i) - after_cgogn_weights.row(i);
+					validation_file << std::endl << "Energy of Line : " << difference.norm() << std::endl;
+					validation_file << "Difference : " << difference.transpose().format(OctaveFmt) << std::endl;
+					validation_file << "Before :"  << csv_weights.row(i).format(OctaveFmt) << std::endl;
+					validation_file << "After :"  << after_cgogn_weights.row(i).format(OctaveFmt) << std::endl << std::endl;
+				}
+			}
+		}
+		validation_file.close();
+	}
+
 	// Function used when using the video format for testing 
 	void parse_video_test_au(std::vector<float>& au_test_values, int nb_au, Eigen::MatrixXd jacobian, Eigen::VectorXd confidence_lower_bound,
 							Eigen::VectorXd confidence_upper_bound){
@@ -1601,12 +1637,13 @@ protected:
 			app_.module("MeshProvider (" + std::string{mesh_traits<MESH>::name} + ")"));
 		set_all_paths(directory_, ".obj", path_aus_);
 		set_all_paths(directory_, ".csv", path_csv_);
-		jacob_read = read_jacob_from_file("jacob.txt");
-		if(system("rm -rf *.jpg validation_au.txt tmp_matrix_file.txt") == 0)
+		jacob_read = true;
+		// jacob_read = read_jacob_from_file("jacob.txt");
+		if(system("rm -rf *.jpg validation_au.txt tmp_matrix_file.txt csv_validation.txt Screen*") == 0)
 			std::cout << "removing useless files" << std::endl;
 		generate_scripts();
 		std::ostringstream filename;
-		filename << directory_ << "CSV_VIDEO/slopes.txt";
+		filename << DEFAULT_PATH << "CGoGN_3/data/slopes.txt";
 		do_blending = get_alphas_betas(filename.str());
 		shape_ = rendering::ShapeDrawer::instance();
 		shape_->color(rendering::ShapeDrawer::SPHERE) = rendering::GLColor(1., 0., 0., 1);
@@ -1642,8 +1679,8 @@ protected:
 				{
 					left_panel_blending();
 					left_panel_csv();
-					left_panel_create_and_test_jacob();
-					left_panel_test_AUs();
+					//left_panel_create_and_test_jacob();
+					//left_panel_test_AUs();
 					left_panel_landmarks();
 				}
 				else
@@ -1685,22 +1722,24 @@ protected:
 		if (attribute_to_blend_.size() != 0)
 		{
 			for (int i = 0; i < attribute_to_blend_.size(); i++)
-			{				
-				if(ImGui::SliderFloat(attribute_to_blend_[i]->name().c_str(), &weights[i], -1.0, 5.0))
-					modeling::blending(*selected_mesh_, attribute_to_blend_, weights , pos_attr_name);
-
+			{			
 				bool apply_weight = apply_weights[i];
+				bool reblend = false;
 				std::ostringstream identifier;
 				identifier << "Apply " << attribute_to_blend_[i]->name().c_str() << " ?";
 				ImGui::Checkbox(identifier.str().c_str(), &apply_weight);
 				if (apply_weight != apply_weights[i])
 				{
 					apply_weights[i] = !apply_weights[i];
+					reblend = true;
 				}
 				if (!apply_weights[i])
 				{
 					weights[i] = 0;
 				}
+				if((ImGui::SliderFloat(attribute_to_blend_[i]->name().c_str(), &weights[i], -1.0, 5.0) && apply_weights[i]) || reblend)
+					modeling::blending(*selected_mesh_, attribute_to_blend_, weights , pos_attr_name);
+
 			}
 
 			if (ImGui::Button("Blend"))
@@ -1722,13 +1761,13 @@ protected:
 
 		// if (ImGui::Button("Blend progressif"))
 		// {
-		// 	//highlight_difference(*selected_mesh_, pos_aus_[1]);
 		// 	do_blending = true;
 		// }
 
 		static int nb_au = 1;
 		if (do_blending)
 		{
+			take_screenshot(nb_screenshot, pos_aus_[nb_au]->name());
 			if (weight < 5.)
 			{
 				blending(*selected_mesh_, {pos_aus_[nb_au]}, {weight});
@@ -1745,12 +1784,19 @@ protected:
 					command << path_openface_ << "build/bin/progressive_blending.sh" << " " << path_openface_ << "samples/"
 							<< " " << directory_ << "CSV_VIDEO/" << " " << path_openface_ << "build/bin/"
 							<< " "
-							<< "-python" << " " << DEFAULT_PATH << "CGoGN_3/data/jacob.py"
-							<< " -static";
+							<< "-python" << " " << DEFAULT_PATH << "CGoGN_3/data/jacob_alphas.py"
+							<< " -static" << " " << DEFAULT_PATH << "CGoGN_3/data/";
 					if (system(command.str().c_str()) == 0) 
 					{
 						std::cout << "Command succesfully executed" << std::endl;
-						
+						std::ostringstream filename;
+						filename << DEFAULT_PATH << "CGoGN_3/data/slopes.txt";
+						get_alphas_betas(filename.str());
+						command.str("");
+						command.clear();
+						command << "rm -rf Screenshot_*";
+						if (system(command.str().c_str()) == 0)
+							std::cout << "Screenshots removed" << std::endl;
 					}
 					else
 						std::cout << "Command impossible to execute" << std::endl;
@@ -1763,12 +1809,7 @@ protected:
 				}
 			}
 		}
-
-		if (do_blending)
-		{
-			take_screenshot(nb_screenshot, pos_aus_[nb_au]->name());
-		}
-
+		
 		ImGui::Separator();
 	}
 
@@ -1802,32 +1843,32 @@ protected:
 		{
 			ImGui::Checkbox("Use Confirm Weights ?" , &confirm_weights);
 
+			// if (ImGui::Button("Apply CSV"))
+			// {
+			// 	csv_.clear();
+			// 	timestamp_csv_.clear();
+			// 	std::string str(current_item_csv);
+			// 	csv_parser(str, ',', csv_weights_detected_, csv_weights_confirm_, vector_OF_rest_csv_);
+			// 	nb_screenshot = 0;
+			// 	apply_matrix_csv(confirm_weights);
+			// 	std::map<std::string, std::vector<float>>::iterator iter = csv_.begin();
+			// 	count_timer_csv = iter->second.size();
+			// 	for (auto& it : csv_)
+			// 	{
+			// 		if (it.first == "timestamp")
+			// 			timestamp_csv_ = it.second;
+			// 	}
+			// 	for (int i = 0; i < timestamp_csv_.size(); i++)
+			// 	{
+			// 		std::cout << timestamp_csv_[i] << std::endl;
+			// 	}
+
+			// 	time_start = ui::App::frame_time_;
+			// 	incr = 0.;
+			// 	poids_frame = 1.;
+			// }
+
 			if (ImGui::Button("Apply CSV"))
-			{
-				csv_.clear();
-				timestamp_csv_.clear();
-				std::string str(current_item_csv);
-				csv_parser(str, ',', csv_weights_detected_, csv_weights_confirm_, vector_OF_rest_csv_);
-				nb_screenshot = 0;
-				apply_matrix_csv(confirm_weights);
-				std::map<std::string, std::vector<float>>::iterator iter = csv_.begin();
-				count_timer_csv = iter->second.size();
-				for (auto& it : csv_)
-				{
-					if (it.first == "timestamp")
-						timestamp_csv_ = it.second;
-				}
-				for (int i = 0; i < timestamp_csv_.size(); i++)
-				{
-					std::cout << timestamp_csv_[i] << std::endl;
-				}
-
-				time_start = ui::App::frame_time_;
-				incr = 0.;
-				poids_frame = 1.;
-			}
-
-			if (ImGui::Button("Apply CSV (with slopes)"))
 			{
 				csv_.clear();
 				timestamp_csv_.clear();
@@ -1893,7 +1934,7 @@ protected:
 
 		if (incr < count_timer_csv)
 		{
-			modeling::blending_csv(*selected_mesh_, weights, incr, poids_frame, csv_ , pos_attr_name, csv_weights_detected_);
+			modeling::blending_csv(*selected_mesh_, incr, poids_frame, csv_ , pos_attr_name, csv_weights_detected_);
 			
 			timer = ui::App::frame_time_ - time_start;
 
@@ -1906,15 +1947,73 @@ protected:
 				poids_frame =
 					(timer - timestamp_csv_[incr - 1]) / (timestamp_csv_[incr] - timestamp_csv_[incr - 1]);
 			}
-			// if (nb_screen > 0)
-			// {
-			// 	take_screenshot(nb_screen - 1, "CSV");
-			// }
+			if (nb_screen > 0)
+			{
+				take_screenshot(nb_screen - 1, "CSV");
+			}
 			std::cout << "timer : " << timer << std::endl;
 			std::cout << "poids_frame : " << poids_frame << std::endl;
 			std::cout << "timestamp_csv : " << timestamp_csv_[incr] << std::endl;
 			nb_screen++;
 		}
+
+		// static bool once = true;
+		// if (incr == count_timer_csv && once)
+		// {
+		// 	once = false;
+		// 	std::ostringstream command;
+		// 	command << path_openface_ << "build/bin/csv_script_matrix.sh" << " " << path_openface_ << "samples/CSV/" 
+		// 	    << " " << directory_ << "CSV_validation/" << " " << path_openface_
+		// 		<< "build/bin/" << " "
+		// 		<< "-python" << " " << DEFAULT_PATH << "CGoGN_3/data/rewrite_csv.py";
+		// 	if (system(command.str().c_str()) == 0)
+		// 	{
+		// 		std::ostringstream path;
+		// 		path << directory_ << "CSV_validation/CSV.csv";
+		// 		std::string string_path = path.str();
+		// 		Eigen::MatrixXd weights_detected_validation_;
+		// 		Eigen::MatrixXd weights_confirm_validation_;
+		// 		Eigen::VectorXd vec;
+		// 		csv_parser(string_path, ',', weights_detected_validation_, weights_confirm_validation_, vec);
+		// 		std::cout << string_path << std::endl;
+		// 		path.str("");
+		// 		path.clear();
+		// 		path << current_item_csv;
+		// 		string_path = path.str();
+		// 		std::cout << string_path << std::endl;
+		// 		csv_parser(string_path, ',', csv_weights_detected_, csv_weights_confirm_, vec);
+		// 		validation_csv("csv_validation.txt" , string_path, csv_weights_detected_ , weights_detected_validation_ , 0.1);
+		// 	}
+		// }
+
+		if (ImGui::Button("Kowalski Analysis"))
+		{
+			// std::ostringstream command;
+			// command << path_openface_ << "build/bin/csv_script_matrix.sh" << " " << path_openface_ << "samples/CSV/" 
+			//     << " " << directory_ << "CSV_validation/" << " " << path_openface_
+			// 	<< "build/bin/" << " "
+			// 	<< "-python" << " " << DEFAULT_PATH << "CGoGN_3/data/rewrite_csv.py";
+			// if (system(command.str().c_str()) == 0)
+			// {
+				std::ostringstream path;
+				path << directory_ << "CSV_validation/CSV.csv";
+				std::string string_path = path.str();
+				Eigen::MatrixXd weights_detected_validation_;
+				Eigen::MatrixXd weights_confirm_validation_;
+				Eigen::VectorXd vec;
+				csv_parser(string_path, ',', weights_detected_validation_, weights_confirm_validation_, vec);
+				std::cout << string_path << std::endl;
+				path.str("");
+				path.clear();
+				path << current_item_csv;
+				string_path = path.str();
+				std::cout << string_path << std::endl;
+				csv_parser(string_path, ',', csv_weights_detected_, csv_weights_confirm_, vec);
+				validation_csv("csv_validation.txt" , string_path, csv_weights_detected_ , weights_detected_validation_ , 0.1);
+			//}
+		}
+		
+		
 
 		ImGui::Separator();
 
@@ -2403,7 +2502,7 @@ private:
 	int nb_frames = 1;
 	float64 timer = 0.;
 	float64 time_start = 0.;
-	int count_timer_csv = 0;
+	int count_timer_csv = -1;
 	bool confirm_weights = true;
 	std::vector<float> timestamp_csv_;
 
@@ -2417,6 +2516,7 @@ private:
 	// Formats to print eigen vectors and matrices
 	Eigen::IOFormat OctaveFmt = Eigen::IOFormat(2, 0, ", ", ";\n", "", "", "[", "]");
 	Eigen::IOFormat VectorFmt = Eigen::IOFormat(4, 0, ", ", ";\n", "", "", "[", "]");
+	Eigen::IOFormat CSVFormat = Eigen::IOFormat(3, Eigen::DontAlignCols, ", ", "\n");
 
 	// Vectors of weights for faces at rest
 	Eigen::VectorXd vector_OF_rest_cgogn_;

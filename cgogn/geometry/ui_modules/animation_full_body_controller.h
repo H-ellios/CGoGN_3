@@ -43,6 +43,8 @@
 
 #include <cgogn/geometry/algos/skinning_helper.h>
 
+#define DEFAULT_PATH CGOGN_STR(CGOGN_DATA_PATH)
+
 namespace fs = std::filesystem;
 
 namespace cgogn
@@ -469,6 +471,76 @@ public:
 		}
 	}
 
+	// Get slopes for each AUs
+	bool get_alphas_betas(std::string filename){
+		std::ifstream infile(filename);
+		if (!infile) {
+			std::cerr << "Cannot open file\n";
+			return true;
+		}
+		std::string line;
+		if (infile.is_open())
+		{
+			int jacob_nb_rows = 0;
+			infile >> jacob_nb_rows;
+			alphas.resize(jacob_nb_rows, jacob_nb_rows);
+			betas.resize(jacob_nb_rows, jacob_nb_rows);
+
+			for (int i = 0; i < jacob_nb_rows; i++)
+			{
+				for (int j = 0; j < jacob_nb_rows; j++)
+				{
+					infile >> alphas(i, j);
+					if ((i == j) && (alphas(i,j) == 0))
+					{
+						alphas(i,j) = 1;
+					}
+				}
+			}
+
+			for (int i = 0; i < jacob_nb_rows; i++)
+			{
+				for (int j = 0; j < jacob_nb_rows; j++)
+				{
+					infile >> betas(i, j);
+					if (i != j)
+					{
+						betas(i,j) = 0;
+					}
+				}
+			}
+		}
+		infile.close();
+		alphas = alphas.transpose().inverse();
+		return false;
+	}
+
+	// Apply slopes to each weights of each AUs for the csv
+	void apply_alphas_csv(bool confirm){
+		Eigen::VectorXd tmp;
+		tmp.resize(csv_weights_detected_.cols());
+		Eigen::MatrixXd alphas_inverse;
+		alphas_inverse.resize(alphas.cols(),alphas.cols());
+		alphas_inverse = alphas.transpose().inverse();
+		for (int i = 0; i < csv_weights_detected_.rows(); i++)
+		{
+			for (int j = 0; j < csv_weights_detected_.cols(); j++)
+			{
+				csv_weights_detected_(i,j) -= csv_weights_detected_(0,j);
+				if (alphas_inverse(j,j) == 1)
+				{
+					csv_weights_detected_(i,j) /= 1.5;
+				}
+				
+
+				if (csv_weights_confirm_(i, j) == 0 && confirm)
+					csv_weights_detected_(i, j) = 0.;
+			}
+			tmp = (csv_weights_detected_.row(i).transpose() - betas) * alphas;
+			csv_weights_detected_.row(i) = tmp.transpose();
+		}
+	}
+
     // This function creates all the differents AUs that have been found with set_all_paths and create for each of them
 	// an attribute DO NOT USE LOAD_SURFACE_FROM_FILE since it creates a new mesh and causes problems with the signal
 	// system
@@ -649,7 +721,13 @@ protected:
 		last_frame_time_ = App::frame_time_;
         set_all_paths(directory_, ".obj", path_aus_);
 		set_all_paths(directory_, ".csv", path_csv_);
-		jacob_read = read_jacob_from_file("jacob.txt");
+		std::ostringstream filename;
+		filename << DEFAULT_PATH << "slopes.txt";
+		std::cout << filename.str() << std::endl;
+		if(get_alphas_betas(filename.str())){
+			std::cout << "Run action_unit_switch exec before this one" << std::endl;
+			exit(0);
+		}
 	}
 
 	void left_panel() override
@@ -679,9 +757,15 @@ protected:
                 ImGui::EndCombo();
             }
 
-			ImGui::Checkbox("Use Confirm Weights ?" , &confirm_weights);
+			if (current_item_csv != NULL)
+			{
+				ImGui::Checkbox("Use Confirm Weights ?" , &confirm_weights);
 
-			ImGui::Checkbox("Synchronize face and body animation ?" , &synchronize);
+				ImGui::Checkbox("Synchronize face and body animation ?" , &synchronize);
+			}
+			
+
+
 			
 			if (selected_animation_)
 				show_time_controls();
@@ -762,7 +846,7 @@ private:
                 timestamp_csv_.clear();
                 csv_parser(str, ',', csv_weights_detected_, csv_weights_confirm_,
                                     vector_OF_rest_csv_);
-				apply_matrix_csv(confirm_weights);
+				apply_alphas_csv(confirm_weights);
 				std::map<std::string, std::vector<float>>::iterator iter = csv_.begin();
 				count_timer_csv = iter->second.size();
 				for (auto& it : csv_)
@@ -772,6 +856,7 @@ private:
 				}
 				incr_csv = 0;
 				poids_frame = 1.;
+				
 			}
 
 			TimeT csv_time = new_time;
@@ -800,9 +885,8 @@ private:
 
 			if (incr_csv < count_timer_csv)
 			{
-				modeling::blending_csv(*selected_mesh_, weights, incr_csv, poids_frame, csv_ , pos_attr_name, csv_weights_detected_);
+				modeling::blending_csv(*selected_mesh_, incr_csv, poids_frame, csv_ , pos_attr_name, csv_weights_detected_);
 			}
-			
 			
 		}
 		if (start)
@@ -1167,8 +1251,12 @@ public:
 	const char* current_item_csv = NULL;
 
     bool jacob_read = false;
-	bool confirm_weights = false;
+	bool confirm_weights = true;
 	bool synchronize = false;
+
+	// slopes associated with each AUs
+	Eigen::MatrixXd alphas;
+	Eigen::MatrixXd betas;
 };
 
 } // namespace ui
