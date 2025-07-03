@@ -175,8 +175,6 @@ int main(int argc, char** argv)
 	cgogn::ui::SurfaceRender<Surface> sr(app);
 	cgogn::ui::VolumeRender<Volume> vr(app);
 
-	std::string dirname = std::string(DEFAULT_MESH_PATH) + std::string(argv[4]);
-
 	app.init_modules();
 
 	cgogn::ui::View* v1 = app.current_view();

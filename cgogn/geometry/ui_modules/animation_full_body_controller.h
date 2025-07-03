@@ -293,56 +293,6 @@ public:
 		pos_attr_name = name;
 	}
 
-    // read the file with the jacobian matrix in it
-	// if it works , will disable the loop to create the jacobian matrix
-	bool read_jacob_from_file(std::string name)
-	{
-		bool jacob_read = false;
-		std::string line;
-		std::ifstream inputFile;
-		inputFile.open(name);
-		if (inputFile.is_open())
-		{
-			int jacob_nb_rows = 0;
-			int jacob_nb_cols = 0;
-			inputFile >> jacob_nb_rows;
-			inputFile >> jacob_nb_cols;
-			matrix_jacob.resize(jacob_nb_rows, jacob_nb_cols);
-
-			for (int i = 0; i < jacob_nb_rows; i++)
-			{
-				for (int j = 0; j < jacob_nb_cols; j++)
-				{
-					inputFile >> matrix_jacob(i, j);
-				}
-			}
-
-			int vector_size = 0;
-			inputFile >> vector_size;
-			vector_confidence_lower_bound.resize(vector_size);
-			vector_confidence_upper_bound.resize(vector_size);
-			vector_OF_rest_cgogn_.resize(vector_size);
-
-			for (int i = 0; i < vector_size; i++)
-			{
-				inputFile >> vector_confidence_lower_bound(i);
-			}
-
-			for (int i = 0; i < vector_size; i++)
-			{
-				inputFile >> vector_confidence_upper_bound(i);
-			}
-
-			for (int i = 0; i < vector_size; i++)
-			{
-				inputFile >> vector_OF_rest_cgogn_(i);
-			}
-			jacob_read = true;
-		}
-		inputFile.close();
-		return jacob_read;
-	}
-
     // Put inside a vector all the files with an extension ext
 	void set_all_paths(std::string root, std::string ext, std::vector<std::string>& paths)
 	{
@@ -441,33 +391,6 @@ public:
 					csv_weights_confirm(j - 1, incr2) = it.second[j];
 				incr2++;
 			}
-		}
-	}
-
-	// Apply the jacobian Matrix to selected CSV
-	// Can use the confirmation of weights
-	void apply_matrix_csv(bool confirm)
-	{
-		Eigen::VectorXd tmp;
-		tmp.resize(csv_weights_detected_.cols());
-		for (int i = 0; i < csv_weights_detected_.rows(); i++)
-		{
-			for (int j = 0; j < csv_weights_detected_.cols(); j++)
-			{
-				if (csv_weights_confirm_(i, j) == 0 && confirm)
-					csv_weights_detected_(i, j) = 0.;
-				else
-				{
-					csv_weights_detected_(i, j) = csv_weights_detected_(i, j) + vector_OF_rest_cgogn_(j);
-					
-					if (j == csv_weights_detected_.cols() - 2)
-					{
-						csv_weights_detected_(i,j) = 0; 
-					}
-				}
-			}
-			tmp = matrix_jacob * csv_weights_detected_.row(i).transpose();
-			csv_weights_detected_.row(i) = tmp.transpose();
 		}
 	}
 

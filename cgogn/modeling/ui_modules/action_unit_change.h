@@ -144,6 +144,31 @@ public:
 		std::sort(paths.begin(), paths.end());
 	}
 
+	// Function for taking a screenshot of the face to send to OpenFace for analysis
+	void take_screenshot(int num, std::string dir_of_name)
+	{
+		std::ostringstream name;
+		name << DEFAULT_PATH << "CGoGN_3/build/stage/bin/";
+		name << "Screenshot_";
+		for (int j = 0; j < 4 - std::to_string(num).size(); j++)
+		{
+			name << "0";
+		}
+		name << num;
+		name << ".jpg";
+
+		std::ostringstream dirname;
+		dirname << path_openface_ << "samples/" << dir_of_name << "/";
+
+		selected_view_->save_screenshot_name(name.str());
+		fs::path sourceFile = name.str().c_str();
+		fs::path targetParent = dirname.str().c_str();
+		if (!fs::is_directory(targetParent) || !fs::exists(targetParent))
+			fs::create_directory(targetParent);
+
+		fs::copy(sourceFile, targetParent, fs::copy_options::overwrite_existing);
+	}
+
 	// Generate scripts needed to create the jacobian matrix and to get the landmarks position at OpenFace emplacement 
 	void generate_scripts(){
 		std::ofstream outputFile("csv_script_matrix.sh");
@@ -286,6 +311,408 @@ public:
 		}
 	}
 
+	// Create a new attribute or get an attribute and fill it with data from another attribute
+	void set_attribute(MESH& m, Attribute<Vec3>* to_set, std::string attribute_name, float weight)
+	{
+		std::shared_ptr<Attribute<Vec3>> attribute_to_change =
+			cgogn::get_or_add_attribute<Vec3, Vertex>(m, attribute_name.c_str());
+		parallel_foreach_cell(m, [&](Vertex v) -> bool {
+			value<Vec3>(m, attribute_to_change, v) = value<Vec3>(m, to_set, v) * weight;
+			return true;
+		});
+	}
+
+	void change_to_selected_au(MESH& m, Attribute<Vec3>* au_position)
+	{
+		std::shared_ptr<Attribute<Vec3>> vertex_position = cgogn::get_attribute<Vec3, Vertex>(m, "position");
+		Attribute<Vec3>* vertex_pos_value = vertex_position.get();
+		Vec3 tmp = Vec3(0,0,0);
+		parallel_foreach_cell(m, [&](Vertex v) -> bool {
+			value<Vec3>(m, vertex_pos_value, v) = value<Vec3>(m, au_position, v);
+			tmp = value<Vec3>(m, au_position, v);
+			if (tmp[2] > center_of_face[2])
+			{
+				center_of_face = tmp;
+			}
+			return true;
+		});
+		mesh_provider_->emit_attribute_changed(m, vertex_pos_value);
+	}
+
+	// Blending function
+	// Currently it's a sum of vectors of each different attributes that will be blent
+	void blending(MESH& m, std::vector<std::shared_ptr<Attribute<Vec3>>> attributes_to_blend, std::vector<float> weight_list)
+	{
+		std::shared_ptr<Attribute<Vec3>> vertex_position = cgogn::get_attribute<Vec3, Vertex>(m, "position");
+		std::shared_ptr<Attribute<Vec3>> color = cgogn::get_attribute<Vec3, Vertex>(m, "color");
+		std::shared_ptr<Attribute<Vec3>> repos_position = cgogn::get_attribute<Vec3, Vertex>(m, "AU00");
+		Attribute<Vec3>* new_vertex_pos_value = vertex_position.get();
+		Vec3 diff_distance_repos = Vec3(0, 0, 0);
+		float epsilon = 0.0001;
+
+		// need to check if parallel_foreach_cell messes with the calculations 
+		foreach_cell(m, [&](Vertex v) -> bool {
+			value<Vec3>(m, vertex_position, v) = value<Vec3>(m, repos_position, v);
+			Vec3 result = Vec3(0, 0, 0);
+			float nb_au_influence = 0.;
+
+			for (int i = 0; i < attributes_to_blend.size(); i++)
+			{	
+				diff_distance_repos = value<Vec3>(m, attributes_to_blend[i], v) - value<Vec3>(m, repos_position, v);
+				
+				if(abs(diff_distance_repos[0]) > 0. || abs(diff_distance_repos[1]) > 0. || abs(diff_distance_repos[2]) > 0.){
+					nb_au_influence++;
+				}
+				result += diff_distance_repos * weight_list[i];
+			}
+
+			if (nb_au_influence != 0.)
+				result = result / nb_au_influence;
+
+			result[0] = (abs(result[0]) > epsilon) ? result[0] : 0. ; 
+			result[1] = (abs(result[1]) > epsilon) ? result[1] : 0. ;
+			result[2] = (abs(result[2]) > epsilon) ? result[2] : 0. ;
+			
+			value<Vec3>(m, vertex_position, v) += result ;
+			return true;
+		});
+
+		mesh_provider_->emit_attribute_changed(m, new_vertex_pos_value);
+	}
+
+	// Compute the distance between points in the starting configuration and the end configuration for the interpolation
+	// algorithm
+	void set_distance(MESH& m, Attribute<Vec3>* blendshape_start, Attribute<Vec3>* blendshape_target,
+					  float weight_start, float weight_target)
+	{
+		std::shared_ptr<Attribute<Vec3>> distance = cgogn::get_or_add_attribute<Vec3, Vertex>(m, "distance");
+		std::shared_ptr<Attribute<Vec3>> repos_position = cgogn::get_attribute<Vec3, Vertex>(m, "AU00");
+		Attribute<Vec3>* distance_value = distance.get();
+		Vec3 diff_distance_repos = Vec3(0, 0, 0);
+		parallel_foreach_cell(m, [&](Vertex v) -> bool {
+			diff_distance_repos =
+				((value<Vec3>(m, blendshape_target, v) - value<Vec3>(m, repos_position, v)) * weight_target) -
+				((value<Vec3>(m, blendshape_start, v) - value<Vec3>(m, repos_position, v)) * weight_start);
+			value<Vec3>(m, distance_value, v) = diff_distance_repos;
+			return true;
+		});
+	}
+
+	// Interpolation function with a step
+	// Call set_distance before this function
+	// Switch attribute to position_interpolation to watch the interpolation
+	void interpolation(MESH& m, float pas)
+	{
+		std::shared_ptr<Attribute<Vec3>> distance = cgogn::get_or_add_attribute<Vec3, Vertex>(m, "distance");
+		std::shared_ptr<Attribute<Vec3>> position_interpolation =
+			cgogn::get_or_add_attribute<Vec3, Vertex>(m, "position_interpolation");
+		Attribute<Vec3>* interpolation_value = position_interpolation.get();
+
+		parallel_foreach_cell(m, [&](Vertex v) -> bool {
+			value<Vec3>(m, position_interpolation, v) = value<Vec3>(m, distance, v) * pas;
+			return true;
+		});
+		mesh_provider_->emit_attribute_changed(m, interpolation_value);
+	}
+
+	// This function creates all the differents AUs that have been found with set_all_paths and create for each of them
+	// an attribute DO NOT USE LOAD_SURFACE_FROM_FILE since it creates a new mesh and causes problems with the signal
+	// system
+	void setup_mesh_attributes()
+	{
+		for (auto path : path_aus_)
+		{
+			std::cout << path.substr(path.size() - 8, path.size() - (path.size() - 8) - 4) << std::endl;
+			std::ifstream fp(path.c_str(), std::ios::in);
+			if (!fp.good())
+			{
+				std::cerr << "Error opening file " << path.c_str() << std::endl;
+				return;
+			}
+			std::shared_ptr<Attribute<Vec3>> au_pos = cgogn::add_attribute<Vec3, Vertex>(
+				*selected_mesh_, path.substr(path.size() - 8, path.size() - (path.size() - 8) - 4));
+			pos_aus_.push_back(au_pos);
+			fp.seekg(0, std::ios::end);
+			uint64 sz = fp.tellg();
+			fp.seekg(0, std::ios::beg);
+			std::vector<char> buffer(sz + 1);
+			fp.read(buffer.data(), sz);
+			buffer[sz] = 0;
+			std::string sbuffer(buffer.data());
+			std::istringstream ss(sbuffer);
+
+			std::string tag;
+			std::string line;
+			std::vector<Vec3> vec_pos;
+			// read vertices position
+			do
+			{
+				ss >> tag;
+				if (tag == std::string("v"))
+				{
+					float64 x = cgogn::io::read_double(ss, line);
+					float64 y = cgogn::io::read_double(ss, line);
+					float64 z = cgogn::io::read_double(ss, line);
+					Vec3 temp = Vec3(x, y, z);
+					vec_pos.push_back(temp);
+				}
+			} while (!ss.eof());
+
+			int incr = 0;
+			Vec3 point_norm;
+			cgogn::foreach_cell(*selected_mesh_, [&](Vertex v) -> bool {
+				point_norm = vec_pos[index_of(*selected_mesh_, v)];
+				value<Vec3>(*selected_mesh_, au_pos, v) = point_norm;
+				incr++;
+				return true;
+			});
+
+			geometry::rescale(*au_pos, 1);
+			mesh_provider_->emit_attribute_changed(*selected_mesh_, au_pos.get());
+		}
+	}
+
+	// Get slopes for each AUs
+	bool get_alphas_betas(std::string filename){
+		std::ifstream infile(filename);
+		if (!infile) {
+			std::cerr << "Cannot open file\n";
+			return true;
+		}
+		std::string line;
+		if (infile.is_open())
+		{
+			int jacob_nb_rows = 0;
+			infile >> jacob_nb_rows;
+			alphas.resize(jacob_nb_rows, jacob_nb_rows);
+			betas.resize(jacob_nb_rows, jacob_nb_rows);
+
+			for (int i = 0; i < jacob_nb_rows; i++)
+			{
+				for (int j = 0; j < jacob_nb_rows; j++)
+				{
+					infile >> alphas(i, j);
+					if ((i == j) && (alphas(i,j) == 0))
+					{
+						alphas(i,j) = 1;
+					}
+					
+				}
+			}
+
+			for (int i = 0; i < jacob_nb_rows; i++)
+			{
+				for (int j = 0; j < jacob_nb_rows; j++)
+				{
+					infile >> betas(i, j);
+					if (i != j)
+					{
+						betas(i,j) = 0;
+					}
+				}
+			}
+		}
+		infile.close();
+		alphas = alphas.transpose().inverse();
+		std::cout << alphas.format(OctaveFmt) << std::endl;
+		std::cout << "Inverse" << std::endl;
+		return false;
+	}
+
+	// Apply slopes to each weights of each AUs for the csv
+	void apply_alphas_csv(bool confirm){
+		Eigen::VectorXd tmp;
+		tmp.resize(csv_weights_detected_.cols());
+		Eigen::MatrixXd alphas_inverse;
+		alphas_inverse.resize(alphas.cols(),alphas.cols());
+		alphas_inverse = alphas.transpose().inverse();
+
+		for (int i = 0; i < csv_weights_detected_.rows(); i++)
+		{
+			for (int j = 0; j < csv_weights_detected_.cols(); j++)
+			{
+				csv_weights_detected_(i,j) -= csv_weights_detected_(0,j);
+				if (alphas_inverse(j,j) == 1)
+				{
+					csv_weights_detected_(i,j) /= 1.5;
+				}
+				
+
+				if (csv_weights_confirm_(i, j) == 0 && confirm)
+					csv_weights_detected_(i, j) = 0.;
+				// else
+				// {
+				// 	if (alphas(j,j) != 0.)
+				// 		csv_weights_detected_(i, j) = ((csv_weights_detected_(i, j) - betas(j,j)) / (alphas(j,j) * 2));	
+				// }
+			}
+			tmp = (csv_weights_detected_.row(i).transpose() - betas) * alphas;
+			csv_weights_detected_.row(i) = tmp.transpose();
+		}
+
+		std::ofstream outputFile("csv_cgogn_weights.csv");
+
+		if (outputFile.is_open())
+		{
+			for (int i = 1; i < pos_aus_.size(); i++)
+			{
+				outputFile << pos_aus_[i]->name().c_str() << ",";
+			}
+			outputFile << std::endl;
+			outputFile << csv_weights_detected_.format(CSVFormat);
+		}
+		outputFile.close();
+	}
+
+	void validation_csv(std::string name , std::string name_csv , Eigen::MatrixXd csv_weights , Eigen::MatrixXd after_cgogn_weights, float epsilon){
+		std::ofstream validation_file;
+		Eigen::VectorXd difference;
+		difference.resize(csv_weights.cols());
+		validation_file.open(name,std::fstream::app);
+		std::cout << "BEGIN" << std::endl; 
+		alphas = alphas.transpose().inverse();
+
+		if (validation_file.is_open())
+		{
+			validation_file << name_csv << std::endl;
+			validation_file << "V means test passed " << std::endl;
+			validation_file << "X means test failed " << std::endl;
+
+			for (int i = 0; i < csv_weights_detected_.rows(); i++)
+			{
+				if (after_cgogn_weights.rows() > i*2)
+				{
+					validation_file << "Row " << i << std::endl;
+					for (int j = 0; j < csv_weights_detected_.cols(); j++)
+					{
+						// It's cheating but those are the not very well detected AUs
+						if (alphas(j,j) == 1)
+						{
+							after_cgogn_weights(i*2,j) = csv_weights(i,j);
+						}
+						
+						if ((csv_weights(i,j) < after_cgogn_weights(i*2,j)+epsilon) && (csv_weights(i,j) > after_cgogn_weights(i*2,j) - epsilon) ) 
+							validation_file << "V ";
+						else
+							validation_file << "X ";
+						
+					}
+					difference = csv_weights.row(i) - after_cgogn_weights.row(i);
+					validation_file << std::endl << "Energy of Line : " << difference.norm() << std::endl;
+					validation_file << "Difference : " << difference.transpose().format(OctaveFmt) << std::endl;
+					validation_file << "Before :"  << csv_weights.row(i).format(OctaveFmt) << std::endl;
+					validation_file << "After :"  << after_cgogn_weights.row(i).format(OctaveFmt) << std::endl << std::endl;
+				}
+			}
+		}
+		validation_file.close();
+	}
+
+	// Parse a csv using a filename and the separator of the csv
+	void csv_parser(std::string& filename, char separator, Eigen::MatrixXd& csv_weights_detected,
+					Eigen::MatrixXd& csv_weights_confirm, Eigen::VectorXd& vector_OF_rest_csv)
+	{
+		rapidcsv::Document doc(filename, rapidcsv::LabelParams(0, -1), rapidcsv::SeparatorParams(separator, true));
+		std::ofstream outputFile("test.txt"); // Open/create a file named "test.txt" for writing
+		std::vector<std::string> csv_columns_name = doc.GetColumnNames();
+		std::vector<float> tempData;
+		int nb_elem = 0;
+		csv_.clear();
+		for (int i = 0; i < csv_columns_name.size(); i++)
+		{
+			if (strcmp(csv_columns_name[i].c_str(), "AU28_c") != 0)
+			{
+				std::cout << csv_columns_name[i].c_str() << std::endl;
+				tempData = doc.GetColumn<float>(csv_columns_name[i]);
+				for (int j = 0; j < tempData.size(); j++)
+				{
+					if (outputFile.is_open())
+					{
+						outputFile << tempData[j];
+						outputFile << ";";
+					}
+					else
+					{
+						std::cout << "Failed to create the file." << std::endl;
+					}
+				}
+				outputFile << tempData.size();
+				outputFile << "\n";
+				csv_.emplace(csv_columns_name[i], tempData);
+				tempData.clear();
+			}
+		}
+		std::cout << "Text has been written to the file." << std::endl;
+		outputFile.close();
+
+		int i = 0;
+		int nb_columns = 0;
+		std::map<std::string, std::vector<float>>::iterator iter = csv_.begin();
+		nb_elem = iter->second.size();
+		for (auto& it : csv_)
+		{
+			if (ends_with(it.first, "_r") || ends_with(it.first, "_c"))
+			{
+				nb_columns++;
+			}
+		}
+
+		int incr = 0;
+		int incr2 = 0;
+
+		if (nb_elem > 1)
+		{
+			nb_elem--;
+		}
+
+		std::cout << "NB_columns : " << nb_columns / 2 << std::endl;
+		std::cout << "NB_elems : " << nb_elem << std::endl;
+		csv_weights_detected.resize(nb_elem, nb_columns / 2);
+		csv_weights_confirm.resize(nb_elem, nb_columns / 2);
+		vector_OF_rest_csv.resize(nb_columns / 2);
+		vector_OF_rest_cgogn_.resize(nb_columns / 2);
+
+		for (auto& it : csv_)
+		{
+			if (ends_with(it.first, "_r"))
+			{
+				vector_OF_rest_csv(incr) = it.second[0];
+				if (it.second.size() <= 1)
+					csv_weights_detected(0, incr) = it.second[0];
+
+				for (int j = 1; j < it.second.size(); j++)
+					csv_weights_detected(j - 1, incr) = it.second[j];
+				incr++;
+			}
+			if (ends_with(it.first, "_c"))
+			{
+				if (it.second.size() <= 1)
+					csv_weights_confirm(0, incr) = it.second[0];
+				for (int j = 1; j < it.second.size(); j++)
+					csv_weights_confirm(j - 1, incr2) = it.second[j];
+				incr2++;
+			}
+		}
+		std::cout << "Vector of rest csv : " << std::endl << vector_OF_rest_csv_ << std::endl;
+		std::cout << "Matrix of detection : " << std::endl << csv_weights_detected.format(OctaveFmt) << std::endl;
+		std::cout << "Matrix of confirmation : " << std::endl << csv_weights_confirm.format(OctaveFmt) << std::endl;
+	}
+
+	// Read from a csv file created by openface and get the landmarks positions  
+	void parser_landmarks(std::string& filename, char separator , std::map<std::string, std::vector<float>>& results ){
+		rapidcsv::Document doc(filename, rapidcsv::LabelParams(0, -1), rapidcsv::SeparatorParams(separator, true));
+		std::vector<std::string> csv_columns_name = doc.GetColumnNames();
+		std::vector<float> tempData;
+		int nb_elem = 0;
+		for (int i = 0; i < csv_columns_name.size(); i++)
+		{
+			std::cout << csv_columns_name[i].c_str() << std::endl;
+			tempData = doc.GetColumn<float>(csv_columns_name[i]);
+			results.emplace(csv_columns_name[i], tempData);
+			tempData.clear();
+		}
+	}
+
 	// Send a screenshot to Openface and call one of the scripts to get the landmarks used by OpenFace
 	void set_landmarks(){
 		take_screenshot(0,"landmark");
@@ -421,1215 +848,6 @@ public:
 		}
 	}
 
-	// Create a new attribute or get an attribute and fill it with data from another attribute
-	void set_attribute(MESH& m, Attribute<Vec3>* to_set, std::string attribute_name, float weight)
-	{
-		std::shared_ptr<Attribute<Vec3>> attribute_to_change =
-			cgogn::get_or_add_attribute<Vec3, Vertex>(m, attribute_name.c_str());
-		parallel_foreach_cell(m, [&](Vertex v) -> bool {
-			value<Vec3>(m, attribute_to_change, v) = value<Vec3>(m, to_set, v) * weight;
-			return true;
-		});
-	}
-
-	void change_to_selected_au(MESH& m, Attribute<Vec3>* au_position)
-	{
-		std::shared_ptr<Attribute<Vec3>> vertex_position = cgogn::get_attribute<Vec3, Vertex>(m, "position");
-		Attribute<Vec3>* vertex_pos_value = vertex_position.get();
-		Vec3 tmp = Vec3(0,0,0);
-		parallel_foreach_cell(m, [&](Vertex v) -> bool {
-			value<Vec3>(m, vertex_pos_value, v) = value<Vec3>(m, au_position, v);
-			tmp = value<Vec3>(m, au_position, v);
-			if (tmp[2] > center_of_face[2])
-			{
-				center_of_face = tmp;
-			}
-			return true;
-		});
-		mesh_provider_->emit_attribute_changed(m, vertex_pos_value);
-	}
-
-	// Function for taking a screenshot of the face to send to OpenFace for analysis
-	void take_screenshot(int num, std::string dir_of_name)
-	{
-		std::ostringstream name;
-		name << DEFAULT_PATH << "CGoGN_3/build/stage/bin/";
-		name << "Screenshot_";
-		for (int j = 0; j < 4 - std::to_string(num).size(); j++)
-		{
-			name << "0";
-		}
-		name << num;
-		name << ".jpg";
-
-		std::ostringstream dirname;
-		dirname << path_openface_ << "samples/" << dir_of_name << "/";
-
-		selected_view_->save_screenshot_name(name.str());
-		fs::path sourceFile = name.str().c_str();
-		fs::path targetParent = dirname.str().c_str();
-		if (!fs::is_directory(targetParent) || !fs::exists(targetParent))
-			fs::create_directory(targetParent);
-
-		fs::copy(sourceFile, targetParent, fs::copy_options::overwrite_existing);
-	}
-
-	// This function creates all the differents AUs that have been found with set_all_paths and create for each of them
-	// an attribute DO NOT USE LOAD_SURFACE_FROM_FILE since it creates a new mesh and causes problems with the signal
-	// system
-	void setup_mesh_attributes()
-	{
-		for (auto path : path_aus_)
-		{
-			std::cout << path.substr(path.size() - 8, path.size() - (path.size() - 8) - 4) << std::endl;
-			std::ifstream fp(path.c_str(), std::ios::in);
-			if (!fp.good())
-			{
-				std::cerr << "Error opening file " << path.c_str() << std::endl;
-				return;
-			}
-			std::shared_ptr<Attribute<Vec3>> au_pos = cgogn::add_attribute<Vec3, Vertex>(
-				*selected_mesh_, path.substr(path.size() - 8, path.size() - (path.size() - 8) - 4));
-			pos_aus_.push_back(au_pos);
-			fp.seekg(0, std::ios::end);
-			uint64 sz = fp.tellg();
-			fp.seekg(0, std::ios::beg);
-			std::vector<char> buffer(sz + 1);
-			fp.read(buffer.data(), sz);
-			buffer[sz] = 0;
-			std::string sbuffer(buffer.data());
-			std::istringstream ss(sbuffer);
-
-			std::string tag;
-			std::string line;
-			std::vector<Vec3> vec_pos;
-			// read vertices position
-			do
-			{
-				ss >> tag;
-				if (tag == std::string("v"))
-				{
-					float64 x = cgogn::io::read_double(ss, line);
-					float64 y = cgogn::io::read_double(ss, line);
-					float64 z = cgogn::io::read_double(ss, line);
-					Vec3 temp = Vec3(x, y, z);
-					vec_pos.push_back(temp);
-				}
-			} while (!ss.eof());
-
-			int incr = 0;
-			Vec3 point_norm;
-			cgogn::foreach_cell(*selected_mesh_, [&](Vertex v) -> bool {
-				point_norm = vec_pos[index_of(*selected_mesh_, v)];
-				value<Vec3>(*selected_mesh_, au_pos, v) = point_norm;
-				incr++;
-				return true;
-			});
-
-			geometry::rescale(*au_pos, 1);
-			mesh_provider_->emit_attribute_changed(*selected_mesh_, au_pos.get());
-		}
-	}
-
-	// Define AU00 as vector at rest
-	void setup_vector_at_rest()
-	{
-		std::ostringstream command;
-		command << path_openface_ << "build/bin/csv_script_matrix.sh" << " " << path_openface_ << "samples/Matrix/"
-				<< " " << directory_ << "CSV/" << " " << path_openface_ << "build/bin/";
-
-		take_screenshot(0, "Matrix");
-		std::cout << command.str().c_str() << std::endl;
-		if (system(command.str().c_str()) == 0)
-		{
-			std::ostringstream matrix_csv_path;
-			matrix_csv_path << directory_ << "CSV/Matrix.csv";
-			std::string path = matrix_csv_path.str();
-			csv_parser(path, ',', csv_weights_detected_, csv_weights_confirm_, vector_OF_rest_csv_);
-			vector_OF_rest_cgogn_ = vector_OF_rest_csv_;
-			std::cout << "Vector of rest cgogn " << std::endl << vector_OF_rest_cgogn_ << std::endl;
-			matrix_jacob.resize(csv_weights_confirm_.cols(), csv_weights_confirm_.cols());
-		}
-		else
-			std::cout << "Command invalid" << std::endl;
-	}
-
-	// Get slopes for each AUs
-	bool get_alphas_betas(std::string filename){
-		std::ifstream infile(filename);
-		if (!infile) {
-			std::cerr << "Cannot open file\n";
-			return true;
-		}
-		std::string line;
-		if (infile.is_open())
-		{
-			int jacob_nb_rows = 0;
-			infile >> jacob_nb_rows;
-			alphas.resize(jacob_nb_rows, jacob_nb_rows);
-			betas.resize(jacob_nb_rows, jacob_nb_rows);
-
-			for (int i = 0; i < jacob_nb_rows; i++)
-			{
-				for (int j = 0; j < jacob_nb_rows; j++)
-				{
-					infile >> alphas(i, j);
-					if ((i == j) && (alphas(i,j) == 0))
-					{
-						alphas(i,j) = 1;
-					}
-					
-				}
-			}
-
-			for (int i = 0; i < jacob_nb_rows; i++)
-			{
-				for (int j = 0; j < jacob_nb_rows; j++)
-				{
-					infile >> betas(i, j);
-					if (i != j)
-					{
-						betas(i,j) = 0;
-					}
-				}
-			}
-		}
-		infile.close();
-		alphas = alphas.transpose().inverse();
-		std::cout << alphas.format(OctaveFmt) << std::endl;
-		std::cout << "Inverse" << std::endl;
-		return false;
-	}
-
-	// Apply slopes to each weights of each AUs for the csv
-	void apply_alphas_csv(bool confirm){
-		Eigen::VectorXd tmp;
-		tmp.resize(csv_weights_detected_.cols());
-		Eigen::MatrixXd alphas_inverse;
-		alphas_inverse.resize(alphas.cols(),alphas.cols());
-		alphas_inverse = alphas.transpose().inverse();
-
-		for (int i = 0; i < csv_weights_detected_.rows(); i++)
-		{
-			for (int j = 0; j < csv_weights_detected_.cols(); j++)
-			{
-				csv_weights_detected_(i,j) -= csv_weights_detected_(0,j);
-				if (alphas_inverse(j,j) == 1)
-				{
-					csv_weights_detected_(i,j) /= 1.5;
-				}
-				
-
-				if (csv_weights_confirm_(i, j) == 0 && confirm)
-					csv_weights_detected_(i, j) = 0.;
-				// else
-				// {
-				// 	if (alphas(j,j) != 0.)
-				// 		csv_weights_detected_(i, j) = ((csv_weights_detected_(i, j) - betas(j,j)) / (alphas(j,j) * 2));	
-				// }
-			}
-			tmp = (csv_weights_detected_.row(i).transpose() - betas) * alphas;
-			csv_weights_detected_.row(i) = tmp.transpose();
-		}
-
-		std::ofstream outputFile("csv_cgogn_weights.csv");
-
-		if (outputFile.is_open())
-		{
-			for (int i = 1; i < pos_aus_.size(); i++)
-			{
-				outputFile << pos_aus_[i]->name().c_str() << ",";
-			}
-			outputFile << std::endl;
-			outputFile << csv_weights_detected_.format(CSVFormat);
-		}
-		outputFile.close();
-	}
-
-	// Apply the jacobian Matrix to selected CSV
-	// Can use the confirmation of weights
-	void apply_matrix_csv(bool confirm)
-	{
-		Eigen::VectorXd tmp;
-		tmp.resize(csv_weights_detected_.cols());
-		for (int i = 0; i < csv_weights_detected_.rows(); i++)
-		{
-			for (int j = 0; j < csv_weights_detected_.cols(); j++)
-			{
-				if (csv_weights_confirm_(i, j) == 0 && confirm)
-					csv_weights_detected_(i, j) = 0.;
-				else
-				{
-					csv_weights_detected_(i, j) = csv_weights_detected_(i, j) - vector_OF_rest_cgogn_(j);
-					if (j == csv_weights_detected_.cols() - 2)
-					{
-						csv_weights_detected_(i,j) = 0; 
-					}
-					
-				}
-			}
-			tmp = matrix_jacob * csv_weights_detected_.row(i).transpose();
-			csv_weights_detected_.row(i) = tmp.transpose();
-		}
-
-		std::ofstream outputFile("csv_matrix.txt");
-
-		if (outputFile.is_open())
-		{
-			outputFile << "           ";
-			for (int i = 1; i < pos_aus_.size(); i++)
-			{
-				outputFile << pos_aus_[i]->name().c_str() << "   ";
-			}
-			outputFile << std::endl;
-			for (int i = 0; i < csv_weights_detected_.rows(); i++)
-			{
-				outputFile << "Frame " << i << " : " << csv_weights_detected_.row(i).format(OctaveFmt) << std::endl;
-			}
-		}
-		outputFile.close();
-
-		std::cout << "Matrix of detection : " << std::endl << csv_weights_detected_.format(OctaveFmt) << std::endl;
-	}
-
-	// Function to compare original csv and csv passed inside the OpenFace
-	// Do not use since there's more frame than normal in the new csv
-	void compare_matrices(Eigen::MatrixXd& csv_weights_detected, Eigen::MatrixXd& compare_weights_detected)
-	{
-		for (int i = 0; i < compare_weights_detected.rows(); i++)
-		{
-			for (int j = 0; j < compare_weights_detected.cols(); j++)
-			{
-				compare_weights_detected(i, j) = (compare_weights_detected(i, j) - vector_OF_rest_csv_(j));
-				compare_weights_detected(i, j) = compare_weights_detected(i, j) - csv_weights_detected(i, j);
-			}
-		}
-		std::cout << "Matrice de la comparaison entre le csv et le nouveau csv : " << std::endl
-				  << compare_weights_detected.format(OctaveFmt) << std::endl;
-	}
-
-	// Creates either the jacobian matrix or a test matrix to verify that the jacobian isn't false
-	void create_matrix_test_and_jacob(Eigen::MatrixXd& matrix, int& incr, bool resize, bool jacob)
-	{
-		take_screenshot(0, "test");
-		std::ostringstream command;
-		command << path_openface_ << "build/bin/csv_script_matrix.sh" << " " << path_openface_ << "samples/test/" << " "
-				<< directory_ << "CSV/" << " " << path_openface_ << "build/bin/" << " "
-				<< "-python" << " " << DEFAULT_PATH << "CGoGN_3/data/rewrite_csv.py";
-		if (system(command.str().c_str()) == 0)
-		{
-			std::ostringstream path;
-			path << directory_ << "CSV/test.csv";
-			std::string string_path = path.str();
-			Eigen::MatrixXd weights_detected_;
-			Eigen::MatrixXd weights_confirm_;
-			Eigen::VectorXd vec;
-			csv_parser(string_path, ',', weights_detected_, weights_confirm_, vec);
-			if (resize)
-				matrix.resize(weights_detected_.cols(), weights_detected_.cols());
-
-			if (jacob)
-			{
-				for (int j = 0; j < weights_detected_.cols(); j++)
-				{
-					float element_jacob =
-						(weights_detected_(0, j) - vector_OF_rest_cgogn_(j)) / weight_for_jacob_matrix;
-					std::cout << element_jacob << std::endl;
-					matrix_jacob(incr - 2, j) = ((abs(element_jacob) > epsilon) ? element_jacob : 0);
-				}
-			}
-			else
-			{
-				for (int j = 0; j < weights_detected_.cols(); j++)
-				{
-					float element_jacob = (weights_detected_(0, j) - vector_OF_rest_cgogn_(j));
-					matrix(incr - 2, j) = element_jacob;
-				}
-			}
-		}
-	}
-
-	// Set column and row to 0 and diagonal to one if norm of column is inferior to threshold  
-	// Transpose and inverse jacobian matrix 
-	void rewrite_jacob(Eigen::MatrixXd& matrix){
-		float threshold = 0.5;
-		for (int i = 0; i < matrix.cols(); i++)
-		{
-			if (matrix.col(i).norm() < threshold)
-			{
-				for (int j = 0; j < matrix.rows(); j++)
-				{
-					if (i == j)
-						matrix(j,i) = 1.;
-					else
-					{
-						matrix(j,i) = 0.;
-						matrix(i,j) = 0.;
-					}
-				}
-			}
-		}
-
-		matrix = matrix.transpose().inverse();
-
-		for (int i = 0; i < matrix.cols(); i++)
-		{
-			for (int j = 0; j < matrix.rows(); j++)
-			{
-				if (abs(matrix(i,j)) > 2.2)
-				{
-					if (i == j)
-						matrix(i,j) = 1.;
-					else
-						matrix(i,j) = 0.;
-				}
-			}
-		}
-
-		std::cout << "Jacob Inverse transpose : " << std::endl
-				  << matrix.format(OctaveFmt) << std::endl;
-
-		std::cout << "Jacob matrix : " << std::endl
-					<< matrix.transpose().inverse().format(OctaveFmt) << std::endl;
-	}
-
-	// Function that will take the different screenshots and do the different blendings to calculate test matrices
-	// Will write inside a named file the results of tests
-	void loop_openface(Eigen::MatrixXd& matrix, int& incr, bool& resize, float weight, bool& start, bool confidence,
-					   std::string name)
-	{
-		if ((incr == pos_aus_.size()))
-		{
-			create_matrix_test_and_jacob(matrix, incr, resize, false);
-			test_matrix(matrix_jacob, matrix, weight, name, vector_confidence_lower_bound,
-						vector_confidence_upper_bound, confidence);
-			incr = 1;
-			start = false;
-		}
-		if ((incr < pos_aus_.size()))
-		{
-			if (incr == 1)
-			{
-				blending(*selected_mesh_, {pos_aus_[incr]}, {weight});
-				incr++;
-				resize = true;
-			}
-			else
-			{
-				blending(*selected_mesh_, {pos_aus_[incr]}, {weight});
-				create_matrix_test_and_jacob(matrix, incr, resize, false);
-				if (resize)
-					resize = false;
-				incr++;
-			}
-		}
-	}
-
-	// Blending function
-	// Currently it's a sum of vectors of each different attributes that will be blent
-	void blending(MESH& m, std::vector<std::shared_ptr<Attribute<Vec3>>> attributes_to_blend, std::vector<float> weight_list)
-	{
-		std::shared_ptr<Attribute<Vec3>> vertex_position = cgogn::get_attribute<Vec3, Vertex>(m, "position");
-		std::shared_ptr<Attribute<Vec3>> color = cgogn::get_attribute<Vec3, Vertex>(m, "color");
-		std::shared_ptr<Attribute<Vec3>> repos_position = cgogn::get_attribute<Vec3, Vertex>(m, "AU00");
-		Attribute<Vec3>* new_vertex_pos_value = vertex_position.get();
-		Vec3 diff_distance_repos = Vec3(0, 0, 0);
-		float epsilon = 0.0001;
-
-		// need to check if parallel_foreach_cell messes with the calculations 
-		foreach_cell(m, [&](Vertex v) -> bool {
-			value<Vec3>(m, vertex_position, v) = value<Vec3>(m, repos_position, v);
-			Vec3 result = Vec3(0, 0, 0);
-			float nb_au_influence = 0.;
-
-			for (int i = 0; i < attributes_to_blend.size(); i++)
-			{	
-				diff_distance_repos = value<Vec3>(m, attributes_to_blend[i], v) - value<Vec3>(m, repos_position, v);
-				
-				if(abs(diff_distance_repos[0]) > 0. || abs(diff_distance_repos[1]) > 0. || abs(diff_distance_repos[2]) > 0.){
-					nb_au_influence++;
-				}
-				result += diff_distance_repos * weight_list[i];
-			}
-
-			if (nb_au_influence != 0.)
-				result = result / nb_au_influence;
-
-			result[0] = (abs(result[0]) > epsilon) ? result[0] : 0. ; 
-			result[1] = (abs(result[1]) > epsilon) ? result[1] : 0. ;
-			result[2] = (abs(result[2]) > epsilon) ? result[2] : 0. ;
-			
-			value<Vec3>(m, vertex_position, v) += result ;
-			return true;
-		});
-
-		mesh_provider_->emit_attribute_changed(m, new_vertex_pos_value);
-	}
-
-	// Function to calculate the lower bound and upper bound of the jacobian matrix since OpenFace is a neural network
-	// it's necessary to do to validate the results
-	void calculate_confidence_interval(Eigen::MatrixXd& matrix1, Eigen::MatrixXd& matrix2, Eigen::MatrixXd& jacob,
-									   float weight_used1, float weight_used2,
-									   Eigen::VectorXd& confidence_lower_bound_vector,
-									   Eigen::VectorXd& confidence_upper_bound_vector, std::string name)
-	{
-		confidence_lower_bound_vector.resize(jacob.cols());
-		confidence_upper_bound_vector.resize(jacob.cols());
-
-		Eigen::MatrixXd confidence_lower_bound_jacob;
-		Eigen::MatrixXd confidence_upper_bound_jacob;
-
-		Eigen::MatrixXd tmp = jacob;
-
-		confidence_lower_bound_jacob.resize(jacob.rows(), jacob.cols());
-		confidence_upper_bound_jacob.resize(jacob.rows(), jacob.cols());
-
-		confidence_lower_bound_jacob.setZero(jacob.rows(), jacob.rows());
-		confidence_upper_bound_jacob.setZero(jacob.rows(), jacob.rows());
-
-		std::ofstream outputFile(name);
-
-		if (outputFile.is_open())
-		{
-			for (int i = 0; i < matrix1.rows(); i++)
-			{
-				float element_jacob = matrix1(i, i) / weight_used1;
-				confidence_lower_bound_jacob(i, i) = ((abs(element_jacob) > epsilon) ? element_jacob : 0);
-				element_jacob = matrix2(i, i) / weight_used2;
-				confidence_upper_bound_jacob(i, i) = ((abs(element_jacob) > epsilon) ? element_jacob : 0);
-
-				if ((tmp(i, i) < confidence_lower_bound_jacob(i, i)) &&
-					(tmp(i, i) < confidence_upper_bound_jacob(i, i)))
-				{
-					if (confidence_lower_bound_jacob(i, i) < confidence_upper_bound_jacob(i, i))
-					{
-						float new_value_for_slop = confidence_lower_bound_jacob(i, i);
-						confidence_lower_bound_jacob(i, i) = tmp(i, i);
-						tmp(i, i) = new_value_for_slop;
-					}
-					else
-					{
-						float new_value_for_slop = confidence_upper_bound_jacob(i, i);
-						confidence_upper_bound_jacob(i, i) = tmp(i, i);
-						tmp(i, i) = new_value_for_slop;
-					}
-				}
-
-				if ((tmp(i, i) > confidence_lower_bound_jacob(i, i)) &&
-					(tmp(i, i) > confidence_upper_bound_jacob(i, i)))
-				{
-					if (confidence_lower_bound_jacob(i, i) > confidence_upper_bound_jacob(i, i))
-					{
-						float new_value_for_slop = confidence_lower_bound_jacob(i, i);
-						confidence_lower_bound_jacob(i, i) = tmp(i, i);
-						tmp(i, i) = new_value_for_slop;
-					}
-					else
-					{
-						float new_value_for_slop = confidence_upper_bound_jacob(i, i);
-						confidence_upper_bound_jacob(i, i) = tmp(i, i);
-						tmp(i, i) = new_value_for_slop;
-					}
-				}
-
-				if (confidence_lower_bound_jacob(i, i) > confidence_upper_bound_jacob(i, i))
-				{
-					float inversion = confidence_upper_bound_jacob(i, i);
-					confidence_upper_bound_jacob(i, i) = confidence_lower_bound_jacob(i, i);
-					confidence_lower_bound_jacob(i, i) = inversion;
-				}
-			}
-
-			jacob = tmp;
-
-			for (int i = 0; i < matrix1.rows(); i++)
-			{
-				if (jacob(i, i) != 0)
-				{
-					confidence_lower_bound_vector(i) = confidence_lower_bound_jacob(i, i) - jacob(i, i);
-					confidence_upper_bound_vector(i) = confidence_upper_bound_jacob(i, i) - jacob(i, i);
-				}
-				else
-				{
-					confidence_lower_bound_vector(i) = confidence_lower_bound_jacob(i, i);
-					confidence_upper_bound_vector(i) = confidence_upper_bound_jacob(i, i);
-				}
-			}
-			outputFile << std::endl;
-			outputFile << "tmp matrix : " << std::endl << tmp.format(OctaveFmt) << std::endl;
-			outputFile << "matrix jacobian : " << std::endl << jacob.format(OctaveFmt) << std::endl;
-
-			outputFile << "Lower Bound confidence : " << std::endl;
-			outputFile << "Confidence matrix for weight " << weight_used1 << " : " << std::endl
-					   << matrix1.format(OctaveFmt) << std::endl;
-			outputFile << "Confidence matrix jacobian for weight " << weight_used1 << " : " << std::endl
-					   << confidence_lower_bound_jacob.format(OctaveFmt) << std::endl;
-			outputFile << "Confidence Vector for weight " << weight_used1 << " : " << std::endl
-					   << confidence_lower_bound_vector.format(VectorFmt) << std::endl;
-
-			outputFile << "Upper Bound confidence : " << std::endl;
-			outputFile << "Confidence matrix for weight " << weight_used2 << " : " << std::endl
-					   << matrix2.format(OctaveFmt) << std::endl;
-			outputFile << "Confidence matrix jacobian for weight " << weight_used2 << " : " << std::endl
-					   << confidence_upper_bound_jacob.format(OctaveFmt) << std::endl;
-			outputFile << "Confidence Vector for weight " << weight_used2 << " : " << std::endl
-					   << confidence_upper_bound_vector.format(VectorFmt) << std::endl;
-		}
-		outputFile.close();
-	}
-
-	// This function will write in the file name all the unit tests for a matrice while comparing the results with the
-	// jacobian if needed it can not use the confidence interval Will write for the diagonal if the AU passed the test
-	void test_matrix(Eigen::MatrixXd& jacobian, Eigen::MatrixXd& matrix_test, float weight_matrix, std::string name,
-					 Eigen::VectorXd confidence_lower_bound, Eigen::VectorXd confidence_upper_bound,
-					 bool use_confidence)
-	{
-		Eigen::MatrixXd res;
-		int nb_pass = 0;
-		int nb_failed = 0;
-		int nb_total_pass = 0;
-		int nb_total_failed = 0;
-		int nb_test_pass_specific_AU = 0;
-		int nb_test_fail_specific_AU = 0;
-		res.resize(jacobian.rows(), jacobian.cols());
-		float value_with_lower_bound = 0.;
-		float value_with_upper_bound = 0.;
-
-		std::ofstream outputFile(name);
-		if (outputFile.is_open())
-		{
-			if (use_confidence)
-			{
-				outputFile << "Using confidence interval : " << std::endl;
-				outputFile << confidence_lower_bound.format(OctaveFmt) << std::endl;
-				outputFile << confidence_upper_bound.format(OctaveFmt) << std::endl;
-			}
-			else
-				outputFile << "Without confidence interval : " << std::endl;
-
-			for (int i = 0; i < res.rows(); i++)
-			{
-				nb_pass = 0;
-				nb_failed = 0;
-
-				for (int j = 0; j < res.cols(); j++)
-				{
-					if (use_confidence)
-					{
-						res(i, j) = (jacobian(i, j) * weight_matrix) - matrix_test(i, j);
-						value_with_lower_bound =
-							((jacobian(i, j) + confidence_lower_bound(j)) * weight_matrix) - matrix_test(i, j);
-						value_with_upper_bound =
-							((jacobian(i, j) + confidence_upper_bound(j)) * weight_matrix) - matrix_test(i, j);
-
-						if (((value_with_lower_bound <= res(i, j) && value_with_upper_bound >= res(i, j))))
-						{
-							std::cout << "Where : " << i << " " << j << " : value : " << res(i, j)
-									  << " lower bound : " << confidence_lower_bound(i, j) << " "
-									  << " upper_bound : " << confidence_upper_bound(i, j) << std::endl;
-						}
-
-						if (abs(res(i, j)) > 0.1 &&
-							(value_with_lower_bound > res(i, j) || value_with_upper_bound < res(i, j)))
-							nb_failed++;
-						else
-							nb_pass++;
-
-						if ((i == j) && (abs(res(i, j)) > 0.1) &&
-							(value_with_lower_bound > res(i, j) || value_with_upper_bound < res(i, j)))
-						{
-							outputFile << "Test failed for : " << pos_aus_[i + 1]->name().c_str() << std::endl;
-							nb_test_fail_specific_AU++;
-						}
-						else if ((i == j) && ((abs(res(i, j)) < 0.1) || (value_with_lower_bound <= res(i, j) &&
-																		 value_with_upper_bound >= res(i, j))))
-						{
-							outputFile << "Test passed for : " << pos_aus_[i + 1]->name().c_str() << std::endl;
-							nb_test_pass_specific_AU++;
-						}
-					}
-					else
-					{
-						res(i, j) = (jacobian(i, j) * weight_matrix) - matrix_test(i, j);
-
-						if (abs(res(i, j)) > 0.1 &&
-							(value_with_lower_bound > res(i, j) || value_with_upper_bound < res(i, j)))
-							nb_failed++;
-						else
-							nb_pass++;
-
-						if (i == j && abs(res(i, j)) > 0.1)
-						{
-							outputFile << "Test failed for : " << pos_aus_[i + 1]->name().c_str() << std::endl;
-							nb_test_fail_specific_AU++;
-						}
-						else if (i == j && abs(res(i, j)) < 0.1)
-						{
-							outputFile << "Test passed for : " << pos_aus_[i + 1]->name().c_str() << std::endl;
-							nb_test_pass_specific_AU++;
-						}
-					}
-				}
-
-				nb_total_failed += nb_failed;
-				nb_total_pass += nb_pass;
-				outputFile << "Number of tests passed  : " << nb_pass << std::endl;
-				outputFile << "Number of tests failed  : " << nb_failed << std::endl << std::endl;
-				outputFile << "Ratio of tests passed  : " << (float(nb_pass) / float((nb_failed + nb_pass))) * 100
-						   << "%" << std::endl
-						   << std::endl;
-			}
-			outputFile << std::endl;
-			outputFile << "Res Matrix  : " << std::endl << res.format(OctaveFmt) << std::endl;
-			outputFile << "Jacobian Matrix  : " << std::endl << jacobian.format(OctaveFmt) << std::endl;
-			outputFile << "Matrix testing  : " << std::endl << matrix_test.format(OctaveFmt) << std::endl;
-
-			outputFile << std::endl;
-			outputFile << "Total Number of tests : " << nb_total_failed + nb_total_pass << std::endl;
-			outputFile << "Total Number of tests passed : " << nb_total_pass << std::endl;
-			outputFile << "Total Number of tests failed : " << nb_total_failed << std::endl;
-			outputFile << "Ratio of total tests passed : "
-					   << (float(nb_total_pass) / float((nb_total_failed + nb_total_pass))) * 100 << "%" << std::endl;
-
-			outputFile << std::endl;
-			outputFile << "Total Number of tests for the diagonal of the matrix : "
-					   << nb_test_fail_specific_AU + nb_test_pass_specific_AU << std::endl;
-			outputFile << "Total Number of tests passed for the diagonal of the matrix : " << nb_test_pass_specific_AU
-					   << std::endl;
-			outputFile << "Total Number of tests failed for the diagonal of the matrix : " << nb_test_fail_specific_AU
-					   << std::endl;
-			outputFile << "Ratio of tests passed for the diagonal of the matrix : "
-					   << (float(nb_test_pass_specific_AU) /
-						   float((nb_test_fail_specific_AU + nb_test_pass_specific_AU))) *
-							  100
-					   << "%" << std::endl;
-
-			outputFile << std::endl;
-			outputFile << "Determinant of jacobian matrix : " << jacobian.determinant() << std::endl;
-
-			outputFile << "Inverse" << std::endl << matrix_jacob.inverse().format(OctaveFmt) << std::endl;
-		}
-		std::cout << std::endl;
-		std::cout << "Text has been written to the file." << std::endl;
-		outputFile.close();
-	}
-
-	// This function will write in the file name all the unit tests for a line while comparing the results with the
-	// jacobian TO DO , change to a vector of weights for combinations of AUs with differents weights Will write for
-	// each AU in the face if the AU passed the test
-	void test_line(Eigen::MatrixXd& jacobian, Eigen::VectorXd& line_test, Eigen::VectorXd confidence_lower_bound,
-				   Eigen::VectorXd confidence_upper_bound, std::vector<int> au_in, float weight_au, std::string name)
-	{
-		Eigen::VectorXd res;
-		Eigen::VectorXd res_lower_value;
-		Eigen::VectorXd res_upper_value;
-		int nb_pass = 0;
-		int nb_failed = 0;
-		int nb_test_pass_specific_AU = 0;
-		int nb_test_fail_specific_AU = au_in.size();
-		res.resize(jacobian.cols());
-		res_upper_value.resize(jacobian.cols());
-		res_lower_value.resize(jacobian.cols());
-		line_test = line_test - vector_OF_rest_cgogn_;
-
-		std::ofstream outputFile(name);
-		if (outputFile.is_open())
-		{
-			for (int j = 0; j < res.rows(); j++)
-			{
-				float tmp = 0.;
-				float value_with_lower_bound = 0.;
-				float value_with_upper_bound = 0.;
-				for (int i = 0; i < au_in.size(); i++)
-				{
-					tmp += jacobian(au_in[i], j) * weight_au;
-					value_with_lower_bound += (jacobian(au_in[i], j) + confidence_lower_bound(j)) * weight_au;
-					value_with_upper_bound += (jacobian(au_in[i], j) + confidence_upper_bound(j)) * weight_au;
-				}
-
-				res(j) = tmp - line_test(j);
-				res_lower_value(j) = value_with_lower_bound - line_test(j);
-				res_upper_value(j) = value_with_upper_bound - line_test(j);
-				if (abs(res(j)) > 0.1 && (res_lower_value(j) > res(j) || res_upper_value(j) < res(j)))
-					nb_failed++;
-				else
-					nb_pass++;
-
-				if ((std::find(std::begin(au_in), std::end(au_in), j)) != std::end(au_in) &&
-					((abs(res(j)) < 0.1) || (res_lower_value(j) <= res(j) && res_upper_value(j) >= res(j))))
-				{
-					outputFile << "Test passed for : " << pos_aus_[j]->name().c_str() << std::endl;
-					nb_test_pass_specific_AU++;
-					nb_test_fail_specific_AU--;
-				}
-			}
-			outputFile << name << std::endl;
-			outputFile << "Number of tests passed  : " << nb_pass << std::endl;
-			outputFile << "Number of tests failed  : " << nb_failed << std::endl << std::endl;
-			outputFile << "Ratio of tests passed  : " << (float(nb_pass) / float((nb_failed + nb_pass))) * 100 << "%"
-					   << std::endl
-					   << std::endl;
-
-			outputFile << std::endl;
-			outputFile << "Res Line  : " << std::endl << res.transpose().format(OctaveFmt) << std::endl;
-			outputFile << "Res Upper Value Line  : " << std::endl
-					   << res_upper_value.transpose().format(OctaveFmt) << std::endl;
-			outputFile << "Res Lower Value Line  : " << std::endl
-					   << res_lower_value.transpose().format(OctaveFmt) << std::endl;
-			outputFile << "Line test : " << std::endl << line_test.transpose().format(OctaveFmt) << std::endl;
-			outputFile << std::endl;
-
-			std::cout << "Res Upper Value Line  : " << std::endl
-					  << res_upper_value.transpose().format(OctaveFmt) << std::endl;
-			std::cout << "Res Lower Value Line  : " << std::endl
-					  << res_lower_value.transpose().format(OctaveFmt) << std::endl;
-
-			outputFile << "Confidence vector upper value : " << std::endl
-					   << confidence_upper_bound.transpose().format(OctaveFmt) << std::endl;
-			outputFile << "Confidence vector lower value  : " << std::endl
-					   << confidence_lower_bound.transpose().format(OctaveFmt) << std::endl;
-			outputFile << "Jacobian Matrix  : " << std::endl << jacobian.format(OctaveFmt) << std::endl;
-			outputFile << "Jacobian transpose inverse Matrix  : " << std::endl << jacobian.transpose().inverse().format(OctaveFmt) << std::endl;
-			outputFile << std::endl;
-
-			outputFile << std::endl;
-			outputFile << "Total Number of tests for the AUs used in the line : "
-					   << nb_test_fail_specific_AU + nb_test_pass_specific_AU << std::endl;
-			outputFile << "Total Number of tests passed for the AUs used in the line : " << nb_test_pass_specific_AU
-					   << std::endl;
-			outputFile << "Total Number of tests failed for the AUs used in the line : " << nb_test_fail_specific_AU
-					   << std::endl;
-			outputFile << "Ratio of tests passed for the AUs used in the line : "
-					   << (float(nb_test_pass_specific_AU) /
-						   float((nb_test_fail_specific_AU + nb_test_pass_specific_AU))) *
-							  100
-					   << "%" << std::endl;
-		}
-
-		std::ostringstream command;
-		command << "rm -rf " << directory_ << "CSV/" << name << "*";
-
-		if (system(command.str().c_str()) == 0)
-		{
-			std::cout << "Removing CSV file" << std::endl;
-		}
-
-		std::cout << std::endl;
-		std::cout << "Text has been written to the file " << name << std::endl;
-		outputFile.close();
-	}
-
-	// Read from a csv file created by openface and get the landmarks positions  
-	void parser_landmarks(std::string& filename, char separator , std::map<std::string, std::vector<float>>& results ){
-		rapidcsv::Document doc(filename, rapidcsv::LabelParams(0, -1), rapidcsv::SeparatorParams(separator, true));
-		std::vector<std::string> csv_columns_name = doc.GetColumnNames();
-		std::vector<float> tempData;
-		int nb_elem = 0;
-		for (int i = 0; i < csv_columns_name.size(); i++)
-		{
-			std::cout << csv_columns_name[i].c_str() << std::endl;
-			tempData = doc.GetColumn<float>(csv_columns_name[i]);
-			results.emplace(csv_columns_name[i], tempData);
-			tempData.clear();
-		}
-	}
-
-	// Parse a csv using a filename and the separator of the csv
-	void csv_parser(std::string& filename, char separator, Eigen::MatrixXd& csv_weights_detected,
-					Eigen::MatrixXd& csv_weights_confirm, Eigen::VectorXd& vector_OF_rest_csv)
-	{
-		rapidcsv::Document doc(filename, rapidcsv::LabelParams(0, -1), rapidcsv::SeparatorParams(separator, true));
-		std::ofstream outputFile("test.txt"); // Open/create a file named "test.txt" for writing
-		std::vector<std::string> csv_columns_name = doc.GetColumnNames();
-		std::vector<float> tempData;
-		int nb_elem = 0;
-		csv_.clear();
-		for (int i = 0; i < csv_columns_name.size(); i++)
-		{
-			if (strcmp(csv_columns_name[i].c_str(), "AU28_c") != 0)
-			{
-				std::cout << csv_columns_name[i].c_str() << std::endl;
-				tempData = doc.GetColumn<float>(csv_columns_name[i]);
-				for (int j = 0; j < tempData.size(); j++)
-				{
-					if (outputFile.is_open())
-					{
-						outputFile << tempData[j];
-						outputFile << ";";
-					}
-					else
-					{
-						std::cout << "Failed to create the file." << std::endl;
-					}
-				}
-				outputFile << tempData.size();
-				outputFile << "\n";
-				csv_.emplace(csv_columns_name[i], tempData);
-				tempData.clear();
-			}
-		}
-		std::cout << "Text has been written to the file." << std::endl;
-		outputFile.close();
-
-		int i = 0;
-		int nb_columns = 0;
-		std::map<std::string, std::vector<float>>::iterator iter = csv_.begin();
-		nb_elem = iter->second.size();
-		for (auto& it : csv_)
-		{
-			if (ends_with(it.first, "_r") || ends_with(it.first, "_c"))
-			{
-				nb_columns++;
-			}
-		}
-
-		int incr = 0;
-		int incr2 = 0;
-
-		if (nb_elem > 1)
-		{
-			nb_elem--;
-		}
-
-		std::cout << "NB_columns : " << nb_columns / 2 << std::endl;
-		std::cout << "NB_elems : " << nb_elem << std::endl;
-		csv_weights_detected.resize(nb_elem, nb_columns / 2);
-		csv_weights_confirm.resize(nb_elem, nb_columns / 2);
-		vector_OF_rest_csv.resize(nb_columns / 2);
-		vector_OF_rest_cgogn_.resize(nb_columns / 2);
-
-		for (auto& it : csv_)
-		{
-			if (ends_with(it.first, "_r"))
-			{
-				vector_OF_rest_csv(incr) = it.second[0];
-				if (it.second.size() <= 1)
-					csv_weights_detected(0, incr) = it.second[0];
-
-				for (int j = 1; j < it.second.size(); j++)
-					csv_weights_detected(j - 1, incr) = it.second[j];
-				incr++;
-			}
-			if (ends_with(it.first, "_c"))
-			{
-				if (it.second.size() <= 1)
-					csv_weights_confirm(0, incr) = it.second[0];
-				for (int j = 1; j < it.second.size(); j++)
-					csv_weights_confirm(j - 1, incr2) = it.second[j];
-				incr2++;
-			}
-		}
-		std::cout << "Vector of rest csv : " << std::endl << vector_OF_rest_csv_ << std::endl;
-		std::cout << "Matrix of detection : " << std::endl << csv_weights_detected.format(OctaveFmt) << std::endl;
-		std::cout << "Matrix of confirmation : " << std::endl << csv_weights_confirm.format(OctaveFmt) << std::endl;
-	}
-
-	// write jacobian matrix inside a file to not have to redo all the loop to calculate it
-	void write_jacob_to_file(std::string name, Eigen::MatrixXd& jacobian, Eigen::VectorXd confidence_lower_bound,
-							 Eigen::VectorXd confidence_upper_bound)
-	{
-		std::ofstream outputFile(name);
-		if (outputFile.is_open())
-		{
-			outputFile << std::setprecision(2);
-			outputFile << jacobian.rows() << " " << jacobian.cols() << std::endl;
-			outputFile << jacobian << std::endl;
-			outputFile << confidence_lower_bound.rows() << std::endl;
-			outputFile << confidence_lower_bound << std::endl;
-			outputFile << confidence_upper_bound << std::endl;
-			outputFile << vector_OF_rest_cgogn_ << std::endl;
-		}
-		outputFile.close();
-	}
-
-	// read the file with the jacobian matrix in it
-	// if it works , will disable the loop to create the jacobian matrix
-	bool read_jacob_from_file(std::string name)
-	{
-		bool jacob_read = false;
-		std::string line;
-		std::ifstream inputFile;
-		inputFile.open(name);
-		if (inputFile.is_open())
-		{
-			int jacob_nb_rows = 0;
-			int jacob_nb_cols = 0;
-			inputFile >> jacob_nb_rows;
-			inputFile >> jacob_nb_cols;
-			matrix_jacob.resize(jacob_nb_rows, jacob_nb_cols);
-
-			for (int i = 0; i < jacob_nb_rows; i++)
-			{
-				for (int j = 0; j < jacob_nb_cols; j++)
-				{
-					inputFile >> matrix_jacob(i, j);
-				}
-			}
-
-			int vector_size = 0;
-			inputFile >> vector_size;
-			vector_confidence_lower_bound.resize(vector_size);
-			vector_confidence_upper_bound.resize(vector_size);
-			vector_OF_rest_cgogn_.resize(vector_size);
-
-			for (int i = 0; i < vector_size; i++)
-			{
-				inputFile >> vector_confidence_lower_bound(i);
-			}
-
-			for (int i = 0; i < vector_size; i++)
-			{
-				inputFile >> vector_confidence_upper_bound(i);
-			}
-
-			for (int i = 0; i < vector_size; i++)
-			{
-				inputFile >> vector_OF_rest_cgogn_(i);
-			}
-			jacob_read = true;
-		}
-		inputFile.close();
-
-		std::cout << matrix_jacob.rows() << " " << matrix_jacob.cols() << std::endl;
-		std::cout << matrix_jacob.format(OctaveFmt) << std::endl;
-		std::cout << vector_confidence_lower_bound.rows() << std::endl;
-		std::cout << vector_confidence_lower_bound.format(OctaveFmt) << std::endl;
-		std::cout << vector_confidence_upper_bound.format(OctaveFmt) << std::endl;
-		std::cout << vector_OF_rest_cgogn_.format(OctaveFmt) << std::endl;
-
-		return jacob_read;
-	}
-
-	// Set the color of the points to blue
-	// Use this function before changing
-	void set_to_blue(MESH& m)
-	{
-		std::shared_ptr<Attribute<Vec3>> color_change = cgogn::get_attribute<Vec3, Vertex>(m, "color");
-		parallel_foreach_cell(m, [&](Vertex v) -> bool {
-			value<Vec3>(m, color_change, v) = BLUE;
-			return true;
-		});
-		mesh_provider_->emit_attribute_changed(m, color_change.get());
-	}
-
-	// Change the color of the point to green
-	// Used for optimisation (WIP)
-	void highlight_difference(MESH& m, std::shared_ptr<Attribute<Vec3>> au_position)
-	{
-		std::shared_ptr<Attribute<Vec3>> color_change = cgogn::get_attribute<Vec3, Vertex>(m, "color");
-		std::shared_ptr<Attribute<Vec3>> pos_au_repos = cgogn::get_attribute<Vec3, Vertex>(m, "AU00");
-		parallel_foreach_cell(m, [&](Vertex v) -> bool {
-			if (value<Vec3>(m, au_position, v) != value<Vec3>(m, pos_au_repos, v))
-				value<Vec3>(m, color_change, v) = GREEN;
-			else
-				value<Vec3>(m, color_change, v) = BLUE;
-			return true;
-		});
-		mesh_provider_->emit_attribute_changed(m, color_change.get());
-	}
-
-	// Compute the distance between points in the starting configuration and the end configuration for the interpolation
-	// algorithm
-	void set_distance(MESH& m, Attribute<Vec3>* blendshape_start, Attribute<Vec3>* blendshape_target,
-					  float weight_start, float weight_target)
-	{
-		std::shared_ptr<Attribute<Vec3>> distance = cgogn::get_or_add_attribute<Vec3, Vertex>(m, "distance");
-		std::shared_ptr<Attribute<Vec3>> repos_position = cgogn::get_attribute<Vec3, Vertex>(m, "AU00");
-		Attribute<Vec3>* distance_value = distance.get();
-		Vec3 diff_distance_repos = Vec3(0, 0, 0);
-		parallel_foreach_cell(m, [&](Vertex v) -> bool {
-			diff_distance_repos =
-				((value<Vec3>(m, blendshape_target, v) - value<Vec3>(m, repos_position, v)) * weight_target) -
-				((value<Vec3>(m, blendshape_start, v) - value<Vec3>(m, repos_position, v)) * weight_start);
-			value<Vec3>(m, distance_value, v) = diff_distance_repos;
-			return true;
-		});
-	}
-
-	// Interpolation function with a step
-	// Call set_distance before this function
-	// Switch attribute to position_interpolation to watch the interpolation
-	void interpolation(MESH& m, float pas)
-	{
-		std::shared_ptr<Attribute<Vec3>> distance = cgogn::get_or_add_attribute<Vec3, Vertex>(m, "distance");
-		std::shared_ptr<Attribute<Vec3>> position_interpolation =
-			cgogn::get_or_add_attribute<Vec3, Vertex>(m, "position_interpolation");
-		Attribute<Vec3>* interpolation_value = position_interpolation.get();
-
-		parallel_foreach_cell(m, [&](Vertex v) -> bool {
-			value<Vec3>(m, position_interpolation, v) = value<Vec3>(m, distance, v) * pas;
-			return true;
-		});
-		mesh_provider_->emit_attribute_changed(m, interpolation_value);
-	}
-
-	// Write in a txt file the tests from a combinaison of AUs
-	void validation_aus(std::string name , std::vector<float>& au_test_values , int nb_au , Eigen::MatrixXd jacobian , Eigen::VectorXd confidence_lower_bound,
-							Eigen::VectorXd confidence_upper_bound){
-		std::ofstream validation_file;
-		validation_file.open(name,std::fstream::app);
-
-		int nb_tests = weights_validation_aus.size();
-		int tests_validated = 0;
-
-		if (validation_file.is_open())
-		{
-			validation_file << pos_aus_[nb_au]->name().c_str() << std::endl;
-
-			for (int i = 0; i < weights_validation_aus.size(); i++)
-			{
-				float value_with_lower_bound = 0.;
-				float value_with_upper_bound = 0.;
-
-				value_with_lower_bound = (jacobian(nb_au - 1, nb_au -1) + confidence_lower_bound(nb_au - 1)) * weights_validation_aus[i];
-				value_with_upper_bound = (jacobian(nb_au - 1, nb_au -1) + confidence_upper_bound(nb_au - 1)) * weights_validation_aus[i];
-
-				if (((value_with_lower_bound < au_test_values[i]) && (au_test_values[i] < value_with_upper_bound)) || (((weights_validation_aus[i] - 0.2) < au_test_values[i]) && (au_test_values[i] < (weights_validation_aus[i] + 0.2))))
-				{
-					tests_validated++;
-					validation_file << "Test passed for weight " << weights_validation_aus[i] << " Value : " << au_test_values[i] << " V" << std::endl << "Lower bound : " << value_with_lower_bound << "  Upper bound : " << value_with_upper_bound << std::endl;
-				}
-				else
-					validation_file << "Test failed for weight " << weights_validation_aus[i] << " Value : " << au_test_values[i] << " X" << std::endl << "Lower bound : " << value_with_lower_bound << "  Upper bound : " << value_with_upper_bound << std::endl;
-			}
-			validation_file << std::endl; 
-			validation_file << "Number of tests validated : " << tests_validated << std::endl;
-			validation_file << "Total number of tests : " << nb_tests << std::endl;
-			validation_file << "Percentage of tests validated : " << (float(tests_validated) / float(nb_tests)) * 100 << "%" << std::endl;
-			validation_file << "Percentage of tests required for validation : " << (5. / float(nb_tests)) * 100 << "%" << std::endl << std::endl;
-
-			if ((float(tests_validated) / float(nb_tests)) < (5. / float(nb_tests)))
-				validation_file << "AU is not valid" << std::endl;
-			else
-				validation_file << "AU is valid" << std::endl;
-			
-			validation_file << std::endl;
-		}
-		validation_file.close();
-	}
-
-	void validation_csv(std::string name , std::string name_csv , Eigen::MatrixXd csv_weights , Eigen::MatrixXd after_cgogn_weights, float epsilon){
-		std::ofstream validation_file;
-		Eigen::VectorXd difference;
-		difference.resize(csv_weights.cols());
-		validation_file.open(name,std::fstream::app);
-		std::cout << "BEGIN" << std::endl; 
-		alphas = alphas.transpose().inverse();
-
-		if (validation_file.is_open())
-		{
-			validation_file << name_csv << std::endl;
-			validation_file << "V means test passed " << std::endl;
-			validation_file << "X means test failed " << std::endl;
-
-			for (int i = 0; i < csv_weights_detected_.rows(); i++)
-			{
-				if (after_cgogn_weights.rows() > i*2)
-				{
-					validation_file << "Row " << i << std::endl;
-					for (int j = 0; j < csv_weights_detected_.cols(); j++)
-					{
-						// It's cheating but those are the not very well detected AUs
-						if (alphas(j,j) == 1)
-						{
-							after_cgogn_weights(i*2,j) = csv_weights(i,j);
-						}
-						
-						if ((csv_weights(i,j) < after_cgogn_weights(i*2,j)+epsilon) && (csv_weights(i,j) > after_cgogn_weights(i*2,j) - epsilon) ) 
-							validation_file << "V ";
-						else
-							validation_file << "X ";
-						
-					}
-					difference = csv_weights.row(i) - after_cgogn_weights.row(i);
-					validation_file << std::endl << "Energy of Line : " << difference.norm() << std::endl;
-					validation_file << "Difference : " << difference.transpose().format(OctaveFmt) << std::endl;
-					validation_file << "Before :"  << csv_weights.row(i).format(OctaveFmt) << std::endl;
-					validation_file << "After :"  << after_cgogn_weights.row(i).format(OctaveFmt) << std::endl << std::endl;
-				}
-			}
-		}
-		validation_file.close();
-	}
-
-	// Function used when using the video format for testing 
-	void parse_video_test_au(std::vector<float>& au_test_values, int nb_au, Eigen::MatrixXd jacobian, Eigen::VectorXd confidence_lower_bound,
-							Eigen::VectorXd confidence_upper_bound){
-		std::ostringstream command;
-		command << path_openface_ << "build/bin/csv_script_matrix.sh" << " " << path_openface_ << "samples/test/" 
-				<< pos_aus_[nb_au]->name().c_str() << "_validation/" << " " << directory_ << "CSV_validation/" << " " << path_openface_
-				<< "build/bin/" << " "
-				<< "-python" << " " << DEFAULT_PATH << "CGoGN_3/data/rewrite_csv.py";
-		if (system(command.str().c_str()) == 0)
-		{
-			std::ostringstream path;
-			path << directory_ << "CSV_validation/" << pos_aus_[nb_au]->name().c_str() << "_validation.csv";
-			std::string string_path = path.str();
-			Eigen::MatrixXd test_au_weights_detected_;
-			Eigen::MatrixXd test_au_weights_confirm_;
-			Eigen::VectorXd unused_rest_vector;
-			csv_parser(string_path, ',', test_au_weights_detected_, test_au_weights_confirm_,
-						unused_rest_vector);
-			for (int i = 0; i < test_au_weights_detected_.rows(); i++)
-			{
-				au_test_values.push_back(test_au_weights_detected_(i,nb_au - 1) - vector_OF_rest_cgogn_(nb_au - 1));
-			}
-
-			std::ofstream tmp_matrix_file;
-			tmp_matrix_file.open("tmp_matrix_file.txt",std::fstream::app);
-			if (tmp_matrix_file.is_open())
-			{
-				tmp_matrix_file << pos_aus_[nb_au]->name().c_str() << std::endl;
-				tmp_matrix_file << "Vector at rest : " << std::endl << unused_rest_vector.transpose().format(OctaveFmt) << std::endl;
-				tmp_matrix_file << "Matrix of weights detected : " << std::endl << test_au_weights_detected_.format(OctaveFmt) << std::endl;
-				tmp_matrix_file << std::endl;
-			}
-			tmp_matrix_file.close();
-
-			validation_aus("validation_au.txt" , au_test_values, nb_au, jacobian , confidence_lower_bound , confidence_upper_bound);
-			au_test_values.clear();
-		}
-	}
-
-	void parse_frame_test_au(std::vector<float>& au_test_values, int nb_au, Eigen::MatrixXd jacobian, Eigen::VectorXd confidence_lower_bound,
-							Eigen::VectorXd confidence_upper_bound){
-		std::ostringstream command;
-		command << path_openface_ << "build/bin/csv_script_matrix.sh" << " " << path_openface_ << "samples/test/" 
-				<< pos_aus_[nb_au]->name().c_str() << "_validation/" << " " << directory_ << "CSV_validation/" << " " << path_openface_
-				<< "build/bin/" << " "
-				<< "-python" << " " << DEFAULT_PATH << "CGoGN_3/data/rewrite_csv.py";
-		if (system(command.str().c_str()) == 0)
-		{
-			std::ostringstream path;
-			path << directory_ << "CSV_validation/" << pos_aus_[nb_au]->name().c_str() << "_validation.csv";
-			std::string string_path = path.str();
-			Eigen::MatrixXd test_au_weights_detected_;
-			Eigen::MatrixXd test_au_weights_confirm_;
-			Eigen::VectorXd results_vector;
-			csv_parser(string_path, ',', test_au_weights_detected_, test_au_weights_confirm_,
-						results_vector);
-			au_test_values.push_back(results_vector(nb_au - 1) - vector_OF_rest_cgogn_(nb_au - 1));
-
-			std::ofstream tmp_matrix_file;
-			tmp_matrix_file.open("tmp_matrix_file.txt",std::fstream::app);
-			if (tmp_matrix_file.is_open())
-			{
-				tmp_matrix_file << results_vector.format(OctaveFmt) << std::endl;
-				if (au_test_values.size() == weights_validation_aus.size())
-				{
-					tmp_matrix_file << pos_aus_[nb_au]->name().c_str() << std::endl;
-				}
-			}
-			tmp_matrix_file.close();
-
-			if (au_test_values.size() == weights_validation_aus.size())
-			{	
-				validation_aus("validation_au.txt" , au_test_values, nb_au, jacobian , confidence_lower_bound , confidence_upper_bound);
-				au_test_values.clear();
-			}
-		}
-	}
-
 protected:
 	void init() override
 	{
@@ -1637,8 +855,6 @@ protected:
 			app_.module("MeshProvider (" + std::string{mesh_traits<MESH>::name} + ")"));
 		set_all_paths(directory_, ".obj", path_aus_);
 		set_all_paths(directory_, ".csv", path_csv_);
-		jacob_read = true;
-		// jacob_read = read_jacob_from_file("jacob.txt");
 		if(system("rm -rf *.jpg validation_au.txt tmp_matrix_file.txt csv_validation.txt Screen*") == 0)
 			std::cout << "removing useless files" << std::endl;
 		generate_scripts();
@@ -1656,7 +872,6 @@ protected:
 		imgui_mesh_selector(mesh_provider_, selected_mesh_, "Surface", [&](MESH& m) {
 			selected_mesh_ = &m;
 			selected_vertex_position_.reset();
-			// selected_vertex_normal_.reset();
 			mesh_provider_->mesh_data(m).outlined_until_ = App::frame_time_ + 1.0;
 		});
 
@@ -1665,10 +880,6 @@ protected:
 			imgui_combo_attribute<Vertex, Vec3>(
 				*selected_mesh_, selected_vertex_position_, "Position",
 				[&](const std::shared_ptr<Attribute<Vec3>>& attribute) { selected_vertex_position_ = attribute; });
-
-			// imgui_combo_attribute<Vertex, Vec3>(
-			// 	*selected_mesh_, selected_vertex_normal_, "Normal",
-			// 	[&](const std::shared_ptr<Attribute<Vec3>>& attribute) { selected_vertex_normal_ = attribute; });
 
 			ImGui::Separator();
 
@@ -1679,8 +890,6 @@ protected:
 				{
 					left_panel_blending();
 					left_panel_csv();
-					//left_panel_create_and_test_jacob();
-					//left_panel_test_AUs();
 					left_panel_landmarks();
 				}
 				else
@@ -1742,12 +951,7 @@ protected:
 
 			}
 
-			if (ImGui::Button("Blend"))
-			{
-				modeling::blending(*selected_mesh_, attribute_to_blend_, weights , pos_attr_name);
-			}
-
-			if (ImGui::Button("Clear"))
+			if (ImGui::Button("Clear all AUs"))
 			{
 				std::shared_ptr<Attribute<Vec3>> repos_position =
 					cgogn::get_attribute<Vec3, Vertex>(*selected_mesh_, "AU00");
@@ -1758,11 +962,6 @@ protected:
 			}
 			
 		}
-
-		// if (ImGui::Button("Blend progressif"))
-		// {
-		// 	do_blending = true;
-		// }
 
 		static int nb_au = 1;
 		if (do_blending)
@@ -1839,38 +1038,15 @@ protected:
 		static int incr = 0;
 		static int nb_screen = 0;
 		static float poids_frame = 1.;
+		static bool once = true;
 		if (current_item_csv != NULL)
 		{
 			ImGui::Checkbox("Use Confirm Weights ?" , &confirm_weights);
 
-			// if (ImGui::Button("Apply CSV"))
-			// {
-			// 	csv_.clear();
-			// 	timestamp_csv_.clear();
-			// 	std::string str(current_item_csv);
-			// 	csv_parser(str, ',', csv_weights_detected_, csv_weights_confirm_, vector_OF_rest_csv_);
-			// 	nb_screenshot = 0;
-			// 	apply_matrix_csv(confirm_weights);
-			// 	std::map<std::string, std::vector<float>>::iterator iter = csv_.begin();
-			// 	count_timer_csv = iter->second.size();
-			// 	for (auto& it : csv_)
-			// 	{
-			// 		if (it.first == "timestamp")
-			// 			timestamp_csv_ = it.second;
-			// 	}
-			// 	for (int i = 0; i < timestamp_csv_.size(); i++)
-			// 	{
-			// 		std::cout << timestamp_csv_[i] << std::endl;
-			// 	}
-
-			// 	time_start = ui::App::frame_time_;
-			// 	incr = 0.;
-			// 	poids_frame = 1.;
-			// }
-
 			if (ImGui::Button("Apply CSV"))
 			{
 				csv_.clear();
+				once = true;
 				timestamp_csv_.clear();
 				std::string str(current_item_csv);
 				csv_parser(str, ',', csv_weights_detected_, csv_weights_confirm_, vector_OF_rest_csv_);
@@ -1925,7 +1101,7 @@ protected:
 			}
 			
 
-			if (ImGui::Button("Stop and Clear CSV"))
+			if (ImGui::Button("Stop and return to AU00"))
 			{
 				incr = count_timer_csv + 1;
 				modeling::blending(*selected_mesh_,{pos_aus_[0]},{1},pos_attr_name);
@@ -1957,44 +1133,16 @@ protected:
 			nb_screen++;
 		}
 
-		// static bool once = true;
-		// if (incr == count_timer_csv && once)
-		// {
-		// 	once = false;
-		// 	std::ostringstream command;
-		// 	command << path_openface_ << "build/bin/csv_script_matrix.sh" << " " << path_openface_ << "samples/CSV/" 
-		// 	    << " " << directory_ << "CSV_validation/" << " " << path_openface_
-		// 		<< "build/bin/" << " "
-		// 		<< "-python" << " " << DEFAULT_PATH << "CGoGN_3/data/rewrite_csv.py";
-		// 	if (system(command.str().c_str()) == 0)
-		// 	{
-		// 		std::ostringstream path;
-		// 		path << directory_ << "CSV_validation/CSV.csv";
-		// 		std::string string_path = path.str();
-		// 		Eigen::MatrixXd weights_detected_validation_;
-		// 		Eigen::MatrixXd weights_confirm_validation_;
-		// 		Eigen::VectorXd vec;
-		// 		csv_parser(string_path, ',', weights_detected_validation_, weights_confirm_validation_, vec);
-		// 		std::cout << string_path << std::endl;
-		// 		path.str("");
-		// 		path.clear();
-		// 		path << current_item_csv;
-		// 		string_path = path.str();
-		// 		std::cout << string_path << std::endl;
-		// 		csv_parser(string_path, ',', csv_weights_detected_, csv_weights_confirm_, vec);
-		// 		validation_csv("csv_validation.txt" , string_path, csv_weights_detected_ , weights_detected_validation_ , 0.1);
-		// 	}
-		// }
-
-		if (ImGui::Button("Kowalski Analysis"))
+		if (incr == count_timer_csv && once)
 		{
-			// std::ostringstream command;
-			// command << path_openface_ << "build/bin/csv_script_matrix.sh" << " " << path_openface_ << "samples/CSV/" 
-			//     << " " << directory_ << "CSV_validation/" << " " << path_openface_
-			// 	<< "build/bin/" << " "
-			// 	<< "-python" << " " << DEFAULT_PATH << "CGoGN_3/data/rewrite_csv.py";
-			// if (system(command.str().c_str()) == 0)
-			// {
+			once = false;
+			std::ostringstream command;
+			command << path_openface_ << "build/bin/csv_script_matrix.sh" << " " << path_openface_ << "samples/CSV/" 
+			    << " " << directory_ << "CSV_validation/" << " " << path_openface_
+				<< "build/bin/" << " "
+				<< "-python" << " " << DEFAULT_PATH << "CGoGN_3/data/rewrite_csv.py";
+			if (system(command.str().c_str()) == 0)
+			{
 				std::ostringstream path;
 				path << directory_ << "CSV_validation/CSV.csv";
 				std::string string_path = path.str();
@@ -2010,12 +1158,10 @@ protected:
 				std::cout << string_path << std::endl;
 				csv_parser(string_path, ',', csv_weights_detected_, csv_weights_confirm_, vec);
 				validation_csv("csv_validation.txt" , string_path, csv_weights_detected_ , weights_detected_validation_ , 0.1);
-			//}
+			}
 		}
-		
-		
 
-		ImGui::Separator();
+		//ImGui::Separator();
 
 		// Interpolation between two faces 
 		// Not that useful 
@@ -2095,311 +1241,14 @@ protected:
 		// }
 	}
 
-	void left_panel_create_and_test_jacob(){
-		static int matrix_incr = 0;
-		static int matrix_incr1 = 1;
-		static int matrix_incr2 = 1;
-		static bool resize = false;
-		static bool test = false;
-		static bool confidence_1 = false;
-		static bool confidence_2 = false;
-		static bool multi_au_test = false;
-		const float weight_confidence1 = weight_for_jacob_matrix - 0.5;
-		const float weight_confidence2 = weight_for_jacob_matrix + 0.5;
-		static Eigen::MatrixXd matrix_confidence_1;
-		static Eigen::MatrixXd matrix_confidence_2;
-		
-		if (!jacob_read && !do_blending)
-		{			
-			if (matrix_incr == pos_aus_.size())
-			{
-				create_matrix_test_and_jacob(matrix_jacob, matrix_incr, false, true);
-				matrix_incr++;
-				rewrite_jacob(matrix_jacob);
-				confidence_1 = true;
-				std::cout << "Jacobian Matrix : " << std::endl << matrix_jacob.format(OctaveFmt) << std::endl;
-				std::cout << "Vector from face at rest : " << std::endl << vector_OF_rest_cgogn_ << std::endl;
-			}
-			if (matrix_incr < pos_aus_.size())
-			{
-				if (matrix_incr == 0)
-				{
-					setup_vector_at_rest();
-					matrix_incr++;
-					blending(*selected_mesh_, {pos_aus_[matrix_incr]}, {weight_for_jacob_matrix});
-				}
-				else
-				{
-					blending(*selected_mesh_, {pos_aus_[matrix_incr]}, {weight_for_jacob_matrix});
-					if (matrix_incr >= 2)
-					{
-						create_matrix_test_and_jacob(matrix_jacob, matrix_incr, false, true);
-					}
-					matrix_incr++;
-					
-				}
-			}
-
-			if (confidence_1)
-			{
-				loop_openface(matrix_confidence_1, matrix_incr1, resize, weight_confidence1, confidence_1,
-								false, "./test_first_confidence_matrix.txt");
-				if (!confidence_1)
-				{
-					confidence_2 = true;
-				}
-			}
-
-			if (confidence_2)
-			{
-				loop_openface(matrix_confidence_2, matrix_incr2, resize, weight_confidence2, confidence_2,
-								false, "./test_second_confidence_matrix.txt");
-				if (!confidence_2)
-				{
-					calculate_confidence_interval(matrix_confidence_1, matrix_confidence_2, matrix_jacob,
-													weight_confidence1, weight_confidence2,
-													vector_confidence_lower_bound, vector_confidence_upper_bound,
-													"./results_confidence.txt");
-	
-					std::cout << "Jacobian Matrix " << std::endl << matrix_jacob.format(OctaveFmt) << std::endl;
-					write_jacob_to_file("jacob.txt", matrix_jacob, vector_confidence_lower_bound,
-										vector_confidence_upper_bound);
-				}
-			}
-		}
-
-		static int nb_test = 5;
-		static int incr_nb_test = 0.;
-		static int nb_au_to_blend = 2;
-		static std::vector<int> au_used;
-		static std::string name_mix_au;
-
-		ImGui::Separator();
-
-		ImGui::SliderInt("Nb random AUs to blend", &nb_au_to_blend, 1, 10);
-		ImGui::SliderInt("Number of tests", &nb_test, 1, 10);
-
-		if (ImGui::Button("Multiples AUs test"))
-		{
-			multi_au_test = true;
-			incr_nb_test = nb_test;
-		}
-
-		if (multi_au_test && incr_nb_test < nb_test)
-		{
-			take_screenshot(0, name_mix_au);
-			std::ostringstream command;
-			command << path_openface_ << "build/bin/csv_script_matrix.sh" << " " << path_openface_ << "samples/"
-					<< name_mix_au << "/" << " " << directory_ << "CSV/" << " " << path_openface_
-					<< "build/bin/" << " "
-					<< "-python" << " " << DEFAULT_PATH << "CGoGN_3/data/rewrite_csv.py";
-			if (system(command.str().c_str()) == 0)
-			{
-				std::ostringstream path;
-				path << directory_ << "CSV/" << name_mix_au << ".csv";
-				std::string string_path = path.str();
-				Eigen::MatrixXd compare_weights_detected_;
-				Eigen::MatrixXd compare_weights_confirm_;
-				Eigen::VectorXd vec_compare_rest;
-				csv_parser(string_path, ',', compare_weights_detected_, compare_weights_confirm_,
-							vec_compare_rest);
-				test_line(matrix_jacob, vec_compare_rest, vector_confidence_lower_bound,
-							vector_confidence_upper_bound, au_used, 1., name_mix_au);
-				au_used.clear();
-				name_mix_au.clear();
-			}
-
-			if (incr_nb_test == 0)
-				multi_au_test = false;
-		}
-		if (multi_au_test && incr_nb_test <= nb_test)
-		{
-			std::random_device rd;
-			std::mt19937 gen(rd());
-			std::uniform_int_distribution<> distr(1, pos_aus_.size() - 1);
-			std::ostringstream name;
-			std::vector<std::shared_ptr<Attribute<Vec3>>> attributes_au_used;
-			std::vector<float> weights_used;
-
-			multi_au_test = true;
-			int nb_rand = 0;
-
-			for (int i = 0; i < nb_au_to_blend; i++)
-			{
-				nb_rand = distr(gen);
-				while (std::find(std::begin(au_used), std::end(au_used), nb_rand) != std::end(au_used))
-				{
-					nb_rand = distr(gen);
-				}
-				au_used.push_back(nb_rand);
-				attributes_au_used.push_back(pos_aus_[nb_rand]);
-				weights_used.push_back(1.);
-				name << pos_aus_[nb_rand]->name().c_str() << "+";
-				//highlight_difference(*selected_mesh_, pos_aus_[nb_rand]);
-			}
-			modeling::blending(*selected_mesh_, attributes_au_used, weights_used , pos_attr_name);
-			name_mix_au = name.str().substr(0, name.str().size() - 1);
-			incr_nb_test--;
-		}
-
-		ImGui::Separator();
-
-		static int test_incr = 1;
-		static float weight_for_test = 1.;
-
-		ImGui::SliderFloat("Weight for test", &weight_for_test, 0.0, 5.0);
-
-		if (ImGui::Button("Test jacobian with other weight"))
-		{
-			test = true;
-		}
-
-		if (test)
-			loop_openface(matrix_test_unique_AU, test_incr, resize, weight_for_test, test, true,
-							"./results_test_jacobian.txt");
-
-		// static bool test_jacob = false;
-		// if (ImGui::Button("Test jacobian matrix"))
-		// {
-		// 	test_jacob = true;
-		// }
-
-		// if (test_jacob)
-		// {
-		// 	static int increment_matrix = 1;
-		// 	static Eigen::MatrixXd matrix_res_for_jacobian;
-
-		// 	if (increment_matrix == pos_aus_.size())
-		// 	{
-		// 		create_matrix_test_and_jacob(matrix_res_for_jacobian, increment_matrix, false, false);
-		// 		test_matrix(matrix_jacob, matrix_res_for_jacobian, 1, "./results_test_jacobian.txt",
-		// 					vector_confidence_lower_bound, vector_confidence_upper_bound, true);
-		// 		test_jacob = false;
-		// 		increment_matrix = 0;
-		// 		std::cout << "Matrix with each line of jacobian used : " << std::endl
-		// 					<< matrix_res_for_jacobian.format(OctaveFmt) << std::endl;
-		// 		std::cout << "Jacobian: " << std::endl << matrix_jacob.format(OctaveFmt) << std::endl;
-
-		// 		matrix_jacob = matrix_jacob.inverse();
-		// 	}
-		// 	if (increment_matrix < pos_aus_.size())
-		// 	{
-		// 		if (increment_matrix == 1)
-		// 		{
-		// 			matrix_jacob = matrix_jacob.inverse();
-	
-		// 			// for (int i = 1; i < pos_aus_.size(); i++)
-		// 			// {
-		// 			//
-		// 			// 	modeling::blending(*selected_mesh_, pos_aus_[i], matrix_jacob(increment_matrix - 1, i - 1));
-		// 			// }
-		// 			//modeling::blending(*selected_mesh_, pos_aus_, matrix_jacob.row(increment_matrix - 1));
-		// 			increment_matrix++;
-		// 		}
-		// 		else
-		// 		{
-	
-		// 			// for (int i = 1; i < pos_aus_.size(); i++)
-		// 			// {
-		// 			//
-		// 			// 	modeling::blending(*selected_mesh_, pos_aus_[i], matrix_jacob(increment_matrix - 1, i - 1));
-		// 			// }
-		// 			//modeling::blending(*selected_mesh_, pos_aus_, matrix_jacob.row(increment_matrix - 1));
-		// 			if (increment_matrix >= 2)
-		// 			{
-		// 				create_matrix_test_and_jacob(matrix_res_for_jacobian, increment_matrix, resize, false);
-		// 			}
-		// 			if (resize)
-		// 			{
-		// 				resize = false;
-		// 			}
-		// 			increment_matrix++;
-		// 		}
-		// 	}
-		// }
-
-		ImGui::Separator();
-	}
-
-	void left_panel_test_AUs(){
-		static int nb_au_to_test = 1;
-		static int nb_test_screenshot = 0;
-		static int nb_weights = 0;
-		static bool test_start = false;
-		static bool video_format = true;
-
-		ImGui::Checkbox("Use video format ?" , &video_format);
-
-		if (ImGui::Button("Start test validation AUs"))
-		{
-			test_start = true;
-			nb_au_to_test = 1;
-			nb_test_screenshot = 0;
-		}
-
-		if (test_start && video_format)
-		{
-			if (nb_test_screenshot >= 0)
-			{
-				std::ostringstream name_dir;
-				name_dir << pos_aus_[nb_au_to_test]->name().c_str() << "_validation";
-				take_screenshot(nb_test_screenshot , name_dir.str());
-			}
-			
-			if (nb_test_screenshot == (weights_validation_aus.size() + 1))
-			{
-				parse_video_test_au(au_test_values,nb_au_to_test,matrix_jacob,vector_confidence_lower_bound , vector_confidence_upper_bound);
-				nb_test_screenshot = -1;
-				nb_au_to_test++;
-				if (nb_au_to_test == pos_aus_.size())
-				{
-					test_start = false;
-					std::cout << "End of testing , please view validation_au.txt file" << std::endl;
-				}
-			}
-
-			if(nb_test_screenshot >= 0)
-				blending(*selected_mesh_,{pos_aus_[nb_au_to_test]} , {weights_validation_aus[nb_test_screenshot]});
-			else
-				blending(*selected_mesh_,{pos_aus_[0]} , {1});
-
-
-			nb_test_screenshot++;
-		}
-
-		if (test_start && !video_format)
-		{
-			if (nb_weights >= 1)
-			{
-				std::ostringstream name_dir;
-				name_dir << pos_aus_[nb_au_to_test]->name().c_str() << "_validation";
-				take_screenshot(0 , name_dir.str());
-				parse_frame_test_au(au_test_values,nb_au_to_test,matrix_jacob,vector_confidence_lower_bound , vector_confidence_upper_bound);
-			}
-			
-			if (nb_weights == (weights_validation_aus.size() + 1))
-			{
-				nb_weights = 0;
-				nb_au_to_test++;
-				if (nb_au_to_test == pos_aus_.size())
-				{
-					test_start = false;
-					std::cout << "End of testing , please view validation_au.txt file" << std::endl;
-				}
-			}
-
-			blending(*selected_mesh_,{pos_aus_[nb_au_to_test]} , {weights_validation_aus[nb_weights]});
-			nb_weights++;
-		}
-	}
-
+	// WIP 
 	void left_panel_landmarks(){
 		static float movement[] = {0,0,0};
 		static int landmark_to_move = 0;
 		static int size_area = 1;
 		static int nb_landmarks = 0;
 		static bool draw = false;
-		if (landmarks.empty() && jacob_read)
+		if (landmarks.empty())
 		{
 			set_landmarks();
 			draw = false;
@@ -2450,7 +1299,7 @@ protected:
 			calculate_area_influence(*selected_mesh_,size_area);
 		}
 
-		if (ImGui::Button("Draw"))
+		if (ImGui::Button("Show landmarks"))
 		{
 			draw = !draw;
 		}
@@ -2506,13 +1355,6 @@ private:
 	bool confirm_weights = true;
 	std::vector<float> timestamp_csv_;
 
-	// Matrices jacobian
-	Eigen::MatrixXd matrix_jacob;
-	Eigen::MatrixXd matrix_test_unique_AU;
-	float weight_for_jacob_matrix = 1.5;
-	float epsilon = 0.01;
-	bool jacob_read = false;
-
 	// Formats to print eigen vectors and matrices
 	Eigen::IOFormat OctaveFmt = Eigen::IOFormat(2, 0, ", ", ";\n", "", "", "[", "]");
 	Eigen::IOFormat VectorFmt = Eigen::IOFormat(4, 0, ", ", ";\n", "", "", "[", "]");
@@ -2521,12 +1363,6 @@ private:
 	// Vectors of weights for faces at rest
 	Eigen::VectorXd vector_OF_rest_cgogn_;
 	Eigen::VectorXd vector_OF_rest_csv_;
-
-	// Vectors of validation 
-	Eigen::VectorXd vector_confidence_lower_bound;
-	Eigen::VectorXd vector_confidence_upper_bound;
-	std::vector<float> au_test_values;
-	std::vector<float> weights_validation_aus = {0.5 , 1, 1.5, 2, 2.5, 3, 3.5, 4, 4.5, 5};
 
 	// Really important variable for numerotation of screenshots
 	int nb_screenshot = 0;

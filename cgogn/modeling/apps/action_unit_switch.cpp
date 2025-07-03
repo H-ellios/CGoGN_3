@@ -120,12 +120,10 @@ int main(int argc, char** argv)
 	std::shared_ptr<Attribute<Vec3>> vertex_position = cgogn::get_attribute<Vec3, Vertex>(*m_pos, "position");
 	std::shared_ptr<Attribute<Vec3>> vertex_normal = cgogn::add_attribute<Vec3, Vertex>(*m_pos, "normal");
 	std::shared_ptr<Attribute<Vec3>> vertex_position_interpolation = cgogn::add_attribute<Vec3, Vertex>(*m_pos, "position_interpolation");
-	std::shared_ptr<Attribute<Vec3>> vertex_color = cgogn::add_attribute<Vec3, Vertex>(*m_pos, "color");
 	std::shared_ptr<Attribute<Vec3>> vertex_distance = cgogn::add_attribute<Vec3, Vertex>(*m_pos, "distance");
 
 	auc.set_mesh(*m_pos,vertex_position);
 	auc.set_position_attr_name("position");
-	auc.set_to_blue(*m_pos);
 	auc.set_attribute(*m_pos,vertex_position.get(),"position_interpolation",1.);
 	auc.set_attribute(*m_pos,vertex_position.get(),"distance",1.);
 

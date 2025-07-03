@@ -103,7 +103,7 @@ void blending_csv(MESH& m, int incr, float poids_frame , std::map<std::string, s
     for (int i = 1; i < attributes_csv.size() + 1; i++)
     {
         float weight_attribute;
-        if (incr < 11)
+        if (incr < 8)
         {
             weight_list.push_back((csv_weights_detected(incr, i - 1) * (1 - poids_frame)) +
                         (csv_weights_detected(incr + 1, i - 1) * poids_frame));
@@ -112,7 +112,7 @@ void blending_csv(MESH& m, int incr, float poids_frame , std::map<std::string, s
         {
             float weight_smooth = 0;
             int j = 1;
-            for(; j < 10 ; j++)
+            for(; j < 7 ; j++)
             {
                 weight_smooth += csv_weights_detected(incr - j, i - 1);
             }
