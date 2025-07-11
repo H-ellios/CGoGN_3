@@ -21,51 +21,26 @@
  *                                                                              *
  *******************************************************************************/
 
-#ifndef CGOGN_RENDERING_SHADERS_OBJ_MESHUV_TEXTURE_H_
-#define CGOGN_RENDERING_SHADERS_OBJ_MESHUV_TEXTURE_H_
-
-#include <cgogn/rendering/cgogn_rendering_export.h>
-#include <cgogn/rendering/shader_program.h>
-#include <cgogn/rendering/texture.h>
+#ifndef CGOGN_CORE_FUNCTIONS_IDENTITY_H_
+#define CGOGN_CORE_FUNCTIONS_IDENTITY_H_
 
 namespace cgogn
 {
 
-namespace rendering
+template <typename T>
+constexpr T&& identity(T&& value) noexcept
 {
-DECLARE_SHADER_CLASS(ObjMeshUV, true, CGOGN_STR(ObjMeshUV))
+    return std::forward<T>(value);
+}
 
-class CGOGN_RENDERING_EXPORT ShaderParamObjMeshUV : public ShaderParam
+// It seems perfect forwarding doesn't help in certain template resolution cases,
+// so we provide this const version for these purposes
+template <typename T>
+constexpr const T& identity_c(const T& value) noexcept
 {
-	void set_uniforms() override;
-
-	std::array<VBO*, 1> vbos_;
-	inline void set_texture_buffer_vbo(uint32 i, VBO* vbo) override
-	{
-		vbos_[i] = vbo;
-	}
-	void bind_texture_buffers() override;
-	void release_texture_buffers() override;
-
-	enum VBOName : uint32
-	{
-		VERTEX_TC = 0,
-	};
-
-public:
-	using ShaderType = ShaderObjMeshUV;
-	GLVec2 ratio_;
-
-	ShaderParamObjMeshUV(ShaderType* sh)
-		: ShaderParam(sh)
-	{
-		for (auto& v : vbos_)
-			v = nullptr;
-	}
-};
-
-} // namespace rendering
+    return value;
+}
 
 } // namespace cgogn
 
-#endif // CGOGN_RENDERING_SHADERS_OBJ_MESHUV_TEXTURE_H__
+#endif // CGOGN_CORE_FUNCTIONS_IDENTITY_H_

@@ -30,6 +30,7 @@
 
 #include <cgogn/core/ui_modules/mesh_data.h>
 #include <cgogn/core/utils/string.h>
+#include <cgogn/core/types/animation/animation_skeleton.h>
 
 #include <cgogn/geometry/functions/bounding_box.h>
 #include <cgogn/geometry/types/vector_traits.h>
@@ -62,6 +63,7 @@ class App;
 
 using geometry::Scalar;
 using geometry::Vec3;
+using geometry::Vec2;
 
 template <typename MESH>
 class MeshProvider : public ProviderModule
@@ -163,7 +165,7 @@ public:
 
 	void remove_mesh(MESH& m)
 	{
-		// TODO
+		// TODO	
 	}
 
 	bool has_mesh(const std::string& name) const
@@ -305,46 +307,56 @@ public:
 		}
 	}
 
-	MESH* load_volume_from_file(const std::string& filename)
+	void save_surface_to_OBJ_file(MESH& m_p, MESH& m_no , MESH& m_tc , const Attribute<Vec3>* vertex_position,
+								const std::string& filename)
 	{
-		if constexpr (mesh_traits<MESH>::dimension == 3 && std::is_default_constructible_v<MESH>)
+		if constexpr (mesh_traits<MESH>::dimension == 2)
 		{
-			std::string name = filename_from_path(filename);
-			if (has_mesh(name))
-				name = remove_extension(name) + "_" + std::to_string(number_of_meshes()) + "." + extension(name);
-			const auto [it, inserted] = meshes_.emplace(name, std::make_unique<MESH>());
-			MESH* m = it->second.get();
-
-			std::string ext = extension(filename);
-			bool imported;
-			if (ext.compare("tet") == 0)
-				imported = io::import_TET(*m, filename);
-			else if (ext.compare("mesh") == 0 || ext.compare("meshb") == 0)
-				imported = io::import_MESHB(*m, filename);
-			else
-				imported = false;
-
-			if (imported)
-			{
-				MeshData<MESH>& md = mesh_data(*m);
-				md.init(m);
-				mesh_filename_[m] = filename;
-				std::shared_ptr<Attribute<Vec3>> vertex_position = get_attribute<Vec3, Vertex>(*m, "position");
-				if (vertex_position)
-					set_mesh_bb_vertex_position(*m, vertex_position);
-				boost::synapse::emit<mesh_added>(this, m);
-				return m;
-			}
-			else
-			{
-				meshes_.erase(name);
-				return nullptr;
-			}
+			auto vertex_normal = get_attribute<Vec3, Vertex>(m_no,"position").get();
+			auto vertex_texture = get_attribute<Vec2, Vertex>(m_tc,"position").get();
+			io::export_OBJ(m_p, m_no, m_tc, vertex_position, vertex_normal, vertex_texture, filename + ".obj");
 		}
-		else
-			return nullptr;
 	}
 
+    MESH* load_volume_from_file(const std::string& filename, std::vector<uint32>* vertex_id_after_import = nullptr)
+    {
+        if constexpr (mesh_traits<MESH>::dimension == 3 && std::is_default_constructible_v<MESH>)
+        {
+            std::string name = filename_from_path(filename);
+            if (has_mesh(name))
+                name = remove_extension(name) + "_" + std::to_string(number_of_meshes()) + "." + extension(name);
+            const auto [it, inserted] = meshes_.emplace(name, std::make_unique<MESH>());
+            MESH* m = it->second.get();
+
+            std::string ext = extension(filename);
+            bool imported;
+            if (ext.compare("tet") == 0)
+                imported = io::import_TET(*m, filename, vertex_id_after_import);
+            else if (ext.compare("mesh") == 0 || ext.compare("meshb") == 0)
+                imported = io::import_MESHB(*m, filename, vertex_id_after_import);
+            else
+                imported = false;
+
+            if (imported)
+            {
+                MeshData<MESH>& md = mesh_data(*m);
+                md.init(m);
+                mesh_filename_[m] = filename;
+                std::shared_ptr<Attribute<Vec3>> vertex_position = get_attribute<Vec3, Vertex>(*m, "position");
+                if (vertex_position)
+                    set_mesh_bb_vertex_position(*m, vertex_position);
+                boost::synapse::emit<mesh_added>(this, m);
+                return m;
+            }
+            else
+            {
+                meshes_.erase(name);
+                return nullptr;
+            }
+        }
+        else
+            return nullptr;
+    }
 	void save_volume_to_file(MESH& m, const Attribute<Vec3>* vertex_position, const std::string& filetype,
 							 const std::string& filename)
 	{
@@ -429,7 +441,7 @@ public:
 			f(*m, name);
 	}
 
-	inline uint32 number_of_meshes()
+    inline uint32 number_of_meshes() const
 	{
 		return uint32(meshes_.size());
 	}
@@ -508,25 +520,26 @@ public:
 	template <typename CELL>
 	using cells_set_changed = struct cells_set_changed_ (*)(CellsSet<MESH, CELL>* set);
 
-	template <typename T>
-	void emit_attribute_changed(const MESH& m, Attribute<T>* attribute)
-	{
-		MeshData<MESH>& md = mesh_data(m);
-		md.update_vbo(attribute);
-		if (static_cast<AttributeGen*>(md.bb_vertex_position_.get()) == static_cast<AttributeGen*>(attribute))
-		{
-			md.update_bb();
-			update_meshes_bb();
-			for (View* v : linked_views_)
-				v->update_scene_bb();
-		}
+    template <bool UpdateVbo = true, typename T>
+    void emit_attribute_changed(const MESH& m, Attribute<T>* attribute)
+    {
+        MeshData<MESH>& md = mesh_data(m);
+        if constexpr (UpdateVbo)
+            md.update_vbo(attribute);
+        if (static_cast<AttributeGen*>(md.bb_vertex_position_.get()) == static_cast<AttributeGen*>(attribute))
+        {
+            md.update_bb();
+            update_meshes_bb();
+            for (View* v : linked_views_)
+                v->update_scene_bb();
+        }
 
-		for (View* v : linked_views_)
-			v->request_update();
+        for (View* v : linked_views_)
+            v->request_update();
 
-		boost::synapse::emit<attribute_changed>(&m, attribute);
-		boost::synapse::emit<attribute_changed_t<T>>(&m, attribute);
-	}
+        boost::synapse::emit<attribute_changed>(&m, attribute);
+        boost::synapse::emit<attribute_changed_t<T>>(&m, attribute);
+    }
 
 	void emit_connectivity_changed(const MESH& m)
 	{
@@ -550,28 +563,34 @@ public:
 protected:
 	void main_menu() override
 	{
+        if constexpr (std::is_same_v<MESH, AnimationSkeleton>)
+            return;
+
 		static std::shared_ptr<pfd::open_file> open_file_dialog;
 		if (open_file_dialog && open_file_dialog->ready())
 		{
 			auto result = open_file_dialog->result();
-			if (uint32(result.size()) > 0)
-			{
-				if constexpr (mesh_traits<MESH>::dimension == 1)
-				{
-					for (auto file : result)
-						load_graph_from_file(file);
-				}
-				if constexpr (mesh_traits<MESH>::dimension == 2)
-				{
-					for (auto file : result)
-						load_surface_from_file(file, load_normalized_);
-				}
-				if constexpr (mesh_traits<MESH>::dimension == 3)
-				{
-					for (auto file : result)
-						load_volume_from_file(file);
-				}
-			}
+            if constexpr (!std::is_same_v<MESH, AnimationSkeleton>)
+            {
+                if (uint32(result.size()) > 0 )
+                {
+                    if constexpr (mesh_traits<MESH>::dimension == 1)
+                    {
+                        for (auto file : result)
+                            load_graph_from_file(file);
+                    }
+                    if constexpr (mesh_traits<MESH>::dimension == 2)
+                    {
+                        for (auto file : result)
+                            load_surface_from_file(file, load_normalized_);
+                    }
+                    if constexpr (mesh_traits<MESH>::dimension == 3)
+                    {
+                        for (auto file : result)
+                            load_volume_from_file(file);
+                    }
+                }
+            }
 			open_file_dialog = nullptr;
 		}
 
@@ -609,6 +628,8 @@ protected:
 		if (ImGui::BeginPopupModal("Save", NULL, ImGuiWindowFlags_AlwaysAutoResize))
 		{
 			static MESH* selected_mesh = nullptr;
+			static MESH* selected_mesh_normal = nullptr;
+			static MESH* selected_mesh_texture = nullptr;
 			static char filename[32] = "\0";
 			static std::string filetype = (*supported_formats_)[0];
 			static std::function<void()> cleanup = []() {};
@@ -627,6 +648,13 @@ protected:
 				}
 				ImGui::EndCombo();
 			}
+			
+			if (filetype.compare("obj") == 0)
+			{
+				imgui_mesh_selector(this, selected_mesh_normal, "Mesh_no", [&](MESH& m) { selected_mesh_normal = &m; });
+				imgui_mesh_selector(this, selected_mesh_texture, "Mesh_tc", [&](MESH& m) { selected_mesh_texture = &m; });
+			}
+
 			ImGui::InputText("Filename", filename, 32);
 
 			if (selected_mesh)
@@ -641,8 +669,11 @@ protected:
 					{
 						if constexpr (mesh_traits<MESH>::dimension == 1)
 							save_graph_to_file(*selected_mesh, selected_vertex_position.get(), filetype, filename);
-						if constexpr (mesh_traits<MESH>::dimension == 2)
-							save_surface_to_file(*selected_mesh, selected_vertex_position.get(), filetype, filename);
+						if constexpr (mesh_traits<MESH>::dimension == 2 )
+							if (filetype.compare("obj") == 0)
+								save_surface_to_OBJ_file(*selected_mesh, *selected_mesh_normal , *selected_mesh_texture, selected_vertex_position.get(), filename);
+							else
+								save_surface_to_file(*selected_mesh, selected_vertex_position.get(), filetype, filename);
 						if constexpr (mesh_traits<MESH>::dimension == 3)
 							save_volume_to_file(*selected_mesh, selected_vertex_position.get(), filetype, filename);
 						close_popup = true;

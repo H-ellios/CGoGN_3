@@ -78,6 +78,44 @@ target_link_libraries(convex_hull
 	${CMAKE_DL_LIBS}
 )
 
+add_executable(action_unit_switch action_unit_switch.cpp)
+target_link_libraries(action_unit_switch
+	cgogn::core
+	cgogn::ui
+	cgogn::io
+	cgogn::rendering
+	cgogn::modeling
+	Blossom5
+	${CMAKE_DL_LIBS}
+)
+
+add_executable(volume_skinning_viewer volume_skinning_viewer.cpp)
+target_link_libraries(volume_skinning_viewer
+        cgogn::core
+        cgogn::ui
+        cgogn::io
+        cgogn::rendering
+        cgogn::modeling
+        simpleICP
+        Blossom5
+        ${CMAKE_DL_LIBS}
+        ${APPLE_LINK}
+)
+
+
+add_executable(volume_skinning_animation_viewer volume_skinning_animation_viewer.cpp)
+target_link_libraries(volume_skinning_animation_viewer
+        cgogn::core
+        cgogn::ui
+        cgogn::io
+        cgogn::rendering
+        cgogn::modeling
+        simpleICP
+        Blossom5
+        ${CMAKE_DL_LIBS}
+        ${APPLE_LINK}
+)
+
 if(APPLE)
 	find_library(CORE_FOUNDATION CoreFoundation)
 	find_library(CARBON Carbon)
@@ -107,4 +145,9 @@ if(APPLE)
 		${CORE_FOUNDATION}
 		${CARBON}
 	)
+
+	target_link_libraries(action_unit_switch
+	${CORE_FOUNDATION}
+	${CARBON}
+)
 endif()

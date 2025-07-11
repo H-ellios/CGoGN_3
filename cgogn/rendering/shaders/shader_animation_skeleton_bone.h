@@ -21,25 +21,48 @@
  *                                                                              *
  *******************************************************************************/
 
-#ifndef CGOGN_RENDERING_SHADERS_OBJ_MESHUV_TEXTURE_H_
-#define CGOGN_RENDERING_SHADERS_OBJ_MESHUV_TEXTURE_H_
+#ifndef CGOGN_RENDERING_SHADERS_ANIMATION_SKELETON_BONE_H_
+#define CGOGN_RENDERING_SHADERS_ANIMATION_SKELETON_BONE_H_
 
 #include <cgogn/rendering/cgogn_rendering_export.h>
 #include <cgogn/rendering/shader_program.h>
-#include <cgogn/rendering/texture.h>
 
 namespace cgogn
 {
 
 namespace rendering
 {
-DECLARE_SHADER_CLASS(ObjMeshUV, true, CGOGN_STR(ObjMeshUV))
 
-class CGOGN_RENDERING_EXPORT ShaderParamObjMeshUV : public ShaderParam
+DECLARE_SHADER_CLASS(AnimationSkeletonBone, false, CGOGN_STR(AnimationSkeletonBone))
+
+class CGOGN_RENDERING_EXPORT ShaderParamAnimationSkeletonBone : public ShaderParam
 {
 	void set_uniforms() override;
 
-	std::array<VBO*, 1> vbos_;
+public:
+	GLColor color_;
+	float32 radius_;
+	float32 lighted_;
+
+	using ShaderType = ShaderAnimationSkeletonBone;
+
+	ShaderParamAnimationSkeletonBone(ShaderType* sh)
+		: ShaderParam(sh, true), color_(1, 1, 0, 1), radius_(1.0f), lighted_(0.0f)
+	{
+	}
+
+	inline ~ShaderParamAnimationSkeletonBone() override
+	{
+	}
+};
+
+DECLARE_SHADER_CLASS(AnimationSkeletonBoneColorNormal, true, CGOGN_STR(AnimationSkeletonBoneColorNormal))
+
+class CGOGN_RENDERING_EXPORT ShaderParamAnimationSkeletonBoneColorNormal : public ShaderParam
+{
+	void set_uniforms() override;
+
+	std::array<VBO*, 3> vbos_;
 	inline void set_texture_buffer_vbo(uint32 i, VBO* vbo) override
 	{
 		vbos_[i] = vbo;
@@ -49,18 +72,29 @@ class CGOGN_RENDERING_EXPORT ShaderParamObjMeshUV : public ShaderParam
 
 	enum VBOName : uint32
 	{
-		VERTEX_TC = 0,
+		JOINT_POSITION = 0,
+		BONE_COLOR = 1,
+		BONE_NORMAL = 2,
 	};
 
-public:
-	using ShaderType = ShaderObjMeshUV;
-	GLVec2 ratio_;
+	// Follow 10 and 11, see MeshRender::draw
+	static constexpr const int JOINT_POSITION_BIND_ID = 12;
+	static constexpr const int BONE_COLOR_BIND_ID = 13;
+	static constexpr const int BONE_NORMAL_BIND_ID = 14;
 
-	ShaderParamObjMeshUV(ShaderType* sh)
-		: ShaderParam(sh)
+public:
+	float32 radius_;
+	float32 lighted_;
+
+	using ShaderType = ShaderAnimationSkeletonBoneColorNormal;
+
+	ShaderParamAnimationSkeletonBoneColorNormal(ShaderType* sh)
+		: ShaderParam(sh, true), radius_(1.0f), lighted_(0.0f)
 	{
-		for (auto& v : vbos_)
-			v = nullptr;
+	}
+
+	inline ~ShaderParamAnimationSkeletonBoneColorNormal() override
+	{
 	}
 };
 
@@ -68,4 +102,4 @@ public:
 
 } // namespace cgogn
 
-#endif // CGOGN_RENDERING_SHADERS_OBJ_MESHUV_TEXTURE_H__
+#endif // CGOGN_RENDERING_SHADERS_ANIMATION_SKELETON_BONE_H_

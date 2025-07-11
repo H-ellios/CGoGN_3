@@ -96,6 +96,8 @@ using Vec2 = Eigen::Vector2d;
 using Vec3 = Eigen::Vector3d;
 using Vec4 = Eigen::Vector4d;
 
+using Quaternion = Eigen::Quaterniond;
+
 using Mat2 = Eigen::Matrix2d;
 using Mat3 = Eigen::Matrix3d;
 using Mat4 = Eigen::Matrix4d;

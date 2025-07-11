@@ -21,51 +21,50 @@
  *                                                                              *
  *******************************************************************************/
 
-#ifndef CGOGN_RENDERING_SHADERS_OBJ_MESHUV_TEXTURE_H_
-#define CGOGN_RENDERING_SHADERS_OBJ_MESHUV_TEXTURE_H_
+#ifndef CGOGN_GEOMETRY_FUNCTIONS_QUATERNION_OPERATIONS_H_
+#define CGOGN_GEOMETRY_FUNCTIONS_QUATERNION_OPERATIONS_H_
 
-#include <cgogn/rendering/cgogn_rendering_export.h>
-#include <cgogn/rendering/shader_program.h>
-#include <cgogn/rendering/texture.h>
+#include <cgogn/geometry/types/vector_traits.h>
 
 namespace cgogn
 {
 
-namespace rendering
+namespace geometry
 {
-DECLARE_SHADER_CLASS(ObjMeshUV, true, CGOGN_STR(ObjMeshUV))
 
-class CGOGN_RENDERING_EXPORT ShaderParamObjMeshUV : public ShaderParam
+template <class T>
+Eigen::Quaternion<T> operator+(Eigen::Quaternion<T> a, const Eigen::Quaternion<T>& b)
 {
-	void set_uniforms() override;
+	a.vec() += b.vec();
+	a.w() += b.w();
+	return a;
+}
 
-	std::array<VBO*, 1> vbos_;
-	inline void set_texture_buffer_vbo(uint32 i, VBO* vbo) override
-	{
-		vbos_[i] = vbo;
-	}
-	void bind_texture_buffers() override;
-	void release_texture_buffers() override;
+template <class S, class T>
+typename std::enable_if_t<std::is_scalar_v<S>, Eigen::Quaternion<T>&>
+operator*=(Eigen::Quaternion<T>& q, const S& s)
+{
+	q.vec() *= s;
+	q.w() *= s;
+	return q;
+}
 
-	enum VBOName : uint32
-	{
-		VERTEX_TC = 0,
-	};
+template <class S, class T>
+typename std::enable_if_t<std::is_scalar_v<S>, Eigen::Quaternion<T>>
+operator*(Eigen::Quaternion<T> q, const S& s)
+{
+	return q *= s;
+}
 
-public:
-	using ShaderType = ShaderObjMeshUV;
-	GLVec2 ratio_;
+template <class S, class T>
+typename std::enable_if_t<std::is_scalar_v<S>, Eigen::Quaternion<T>>
+operator*(const S& s, Eigen::Quaternion<T> q)
+{
+	return q *= s;
+}
 
-	ShaderParamObjMeshUV(ShaderType* sh)
-		: ShaderParam(sh)
-	{
-		for (auto& v : vbos_)
-			v = nullptr;
-	}
-};
-
-} // namespace rendering
+} // namespace geometry
 
 } // namespace cgogn
 
-#endif // CGOGN_RENDERING_SHADERS_OBJ_MESHUV_TEXTURE_H__
+#endif // CGOGN_GEOMETRY_FUNCTIONS_QUATERNION_OPERATIONS_H_
