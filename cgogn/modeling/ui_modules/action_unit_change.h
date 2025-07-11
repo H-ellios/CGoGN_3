@@ -84,6 +84,8 @@ public:
 	{
 	}
 
+	std::vector<std::shared_ptr<Attribute<Vec3>>> pos_aus_;
+
 public:
 	static bool ends_with(const std::string& str, const std::string& suffix)
 	{
@@ -136,10 +138,7 @@ public:
 		for (auto& p : fs::recursive_directory_iterator(root))
 		{
 			if (p.path().extension() == ext)
-			{
 				paths.push_back(p.path().string());
-				std::cout << p.path().string() << std::endl;
-			}
 		}
 		std::sort(paths.begin(), paths.end());
 	}
@@ -199,8 +198,6 @@ public:
 		std::ostringstream command; 
 		command << "cp csv_script_matrix.sh " << path_openface_ << "build/bin/";
 
-		std::cout << command.str() << std::endl;
-
 		if (system(command.str().c_str()) == 0)
 		{
 			std::cout << "Script generated for csv_analysis" << std::endl;
@@ -208,7 +205,6 @@ public:
 			command.clear();
 
 			command << "chmod +x " << path_openface_ << "build/bin/csv_script_matrix.sh";
-			std::cout << command.str() << std::endl;
 			if (system(command.str().c_str()) != 0)
 				std::cout << "Can't execute the script" << std::endl;
 		}
@@ -223,7 +219,7 @@ public:
 			blendingFile << "ERASE_PYTHON=$4\n";
 			blendingFile << "PATH_PYTHON=$5\n";
 			blendingFile << "DYNAMIC=$6\n";
-			blendingFile << "OUTDIR_PYTHON=$7\n\n";
+			blendingFile << "DIR_SLOPE=$7\n";
 
 			blendingFile << "AU=(\"AU01\" \"AU02\" \"AU04\" \"AU05\" \"AU06\" \"AU07\" \"AU09\" \"AU10\" \"AU12\" \"AU14\" \"AU15\" \"AU17\" \"AU20\" \"AU23\" \"AU25\" \"AU26\" \"AU45\") \n";
 
@@ -232,7 +228,7 @@ public:
 			blendingFile << "	for au in \"${AU[@]}\"; do \n";
 			blendingFile << "		tmp=$au\n";
 			blendingFile << "		${EXECDIR}FeatureExtraction -aus -out_dir ${OUTDIR} -fdir ${FDIR}${tmp}/\n\n";
-			blendingFile << "		# ${EXECDIR}FeatureExtraction -aus -au_static -out_dir ${OUTDIR} -fdir ${FDIR}${tmp}/ -of ${tmp}_static\n\n";
+			blendingFile << "		${EXECDIR}FeatureExtraction -aus -au_static -out_dir ${OUTDIR} -fdir ${FDIR}${tmp}/ -of ${tmp}_static\n\n";
 			blendingFile << "	done\n";
 			blendingFile << "else\n";
 			blendingFile << "	for au in \"${AU[@]}\"; do \n";
@@ -248,8 +244,9 @@ public:
 
 			blendingFile << "if [ \"$ERASE_PYTHON\" == \"-python\" ]\n";
 			blendingFile << "then\n";
-			blendingFile << "    python3 ${PATH_PYTHON} ${OUTDIR_PYTHON}\n";
-			blendingFile << "    #rm -rf ${FDIR}*.jpg\n";
+			blendingFile << "    python3 ${PATH_PYTHON} ${OUTDIR} ${DIR_SLOPE}\n";
+			blendingFile << "    rm -rf ${FDIR}*.jpg\n";
+			blendingFile << "    rm -rf *.jpg\n";
 			blendingFile << "fi\n";
 		}
 		blendingFile.close();
@@ -258,7 +255,6 @@ public:
 		command.clear();
 		command << "cp progressive_blending.sh " << path_openface_ << "build/bin/";
 
-		std::cout << command.str() << std::endl;
 
 		if (system(command.str().c_str()) == 0)
 		{
@@ -267,7 +263,6 @@ public:
 			command.clear();
 
 			command << "chmod +x " << path_openface_ << "build/bin/progressive_blending.sh";
-			std::cout << command.str() << std::endl;
 			if (system(command.str().c_str()) != 0)
 				std::cout << "Can't execute the script" << std::endl;
 		}
@@ -341,6 +336,7 @@ public:
 
 	// Blending function
 	// Currently it's a sum of vectors of each different attributes that will be blent
+	// Prefer using the one in module 
 	void blending(MESH& m, std::vector<std::shared_ptr<Attribute<Vec3>>> attributes_to_blend, std::vector<float> weight_list)
 	{
 		std::shared_ptr<Attribute<Vec3>> vertex_position = cgogn::get_attribute<Vec3, Vertex>(m, "position");
@@ -354,20 +350,17 @@ public:
 		foreach_cell(m, [&](Vertex v) -> bool {
 			value<Vec3>(m, vertex_position, v) = value<Vec3>(m, repos_position, v);
 			Vec3 result = Vec3(0, 0, 0);
-			float nb_au_influence = 0.;
+			// float nb_au_influence = 0.;
 
 			for (int i = 0; i < attributes_to_blend.size(); i++)
 			{	
 				diff_distance_repos = value<Vec3>(m, attributes_to_blend[i], v) - value<Vec3>(m, repos_position, v);
 				
-				if(abs(diff_distance_repos[0]) > 0. || abs(diff_distance_repos[1]) > 0. || abs(diff_distance_repos[2]) > 0.){
-					nb_au_influence++;
-				}
+				// if(abs(diff_distance_repos[0]) > 0. || abs(diff_distance_repos[1]) > 0. || abs(diff_distance_repos[2]) > 0.){
+				// 	nb_au_influence++;
+				// }
 				result += diff_distance_repos * weight_list[i];
 			}
-
-			if (nb_au_influence != 0.)
-				result = result / nb_au_influence;
 
 			result[0] = (abs(result[0]) > epsilon) ? result[0] : 0. ; 
 			result[1] = (abs(result[1]) > epsilon) ? result[1] : 0. ;
@@ -422,7 +415,6 @@ public:
 	{
 		for (auto path : path_aus_)
 		{
-			std::cout << path.substr(path.size() - 8, path.size() - (path.size() - 8) - 4) << std::endl;
 			std::ifstream fp(path.c_str(), std::ios::in);
 			if (!fp.good())
 			{
@@ -514,8 +506,9 @@ public:
 		}
 		infile.close();
 		alphas = alphas.transpose().inverse();
+		std::cout << "Alphas matrix" << std::endl;
 		std::cout << alphas.format(OctaveFmt) << std::endl;
-		std::cout << "Inverse" << std::endl;
+		
 		return false;
 	}
 
@@ -540,11 +533,6 @@ public:
 
 				if (csv_weights_confirm_(i, j) == 0 && confirm)
 					csv_weights_detected_(i, j) = 0.;
-				// else
-				// {
-				// 	if (alphas(j,j) != 0.)
-				// 		csv_weights_detected_(i, j) = ((csv_weights_detected_(i, j) - betas(j,j)) / (alphas(j,j) * 2));	
-				// }
 			}
 			tmp = (csv_weights_detected_.row(i).transpose() - betas) * alphas;
 			csv_weights_detected_.row(i) = tmp.transpose();
@@ -569,7 +557,6 @@ public:
 		Eigen::VectorXd difference;
 		difference.resize(csv_weights.cols());
 		validation_file.open(name,std::fstream::app);
-		std::cout << "BEGIN" << std::endl; 
 		alphas = alphas.transpose().inverse();
 
 		if (validation_file.is_open())
@@ -622,7 +609,6 @@ public:
 		{
 			if (strcmp(csv_columns_name[i].c_str(), "AU28_c") != 0)
 			{
-				std::cout << csv_columns_name[i].c_str() << std::endl;
 				tempData = doc.GetColumn<float>(csv_columns_name[i]);
 				for (int j = 0; j < tempData.size(); j++)
 				{
@@ -642,7 +628,6 @@ public:
 				tempData.clear();
 			}
 		}
-		std::cout << "Text has been written to the file." << std::endl;
 		outputFile.close();
 
 		int i = 0;
@@ -665,8 +650,6 @@ public:
 			nb_elem--;
 		}
 
-		std::cout << "NB_columns : " << nb_columns / 2 << std::endl;
-		std::cout << "NB_elems : " << nb_elem << std::endl;
 		csv_weights_detected.resize(nb_elem, nb_columns / 2);
 		csv_weights_confirm.resize(nb_elem, nb_columns / 2);
 		vector_OF_rest_csv.resize(nb_columns / 2);
@@ -693,9 +676,6 @@ public:
 				incr2++;
 			}
 		}
-		std::cout << "Vector of rest csv : " << std::endl << vector_OF_rest_csv_ << std::endl;
-		std::cout << "Matrix of detection : " << std::endl << csv_weights_detected.format(OctaveFmt) << std::endl;
-		std::cout << "Matrix of confirmation : " << std::endl << csv_weights_confirm.format(OctaveFmt) << std::endl;
 	}
 
 	// Read from a csv file created by openface and get the landmarks positions  
@@ -706,7 +686,6 @@ public:
 		int nb_elem = 0;
 		for (int i = 0; i < csv_columns_name.size(); i++)
 		{
-			std::cout << csv_columns_name[i].c_str() << std::endl;
 			tempData = doc.GetColumn<float>(csv_columns_name[i]);
 			results.emplace(csv_columns_name[i], tempData);
 			tempData.clear();
@@ -722,7 +701,6 @@ public:
 				<< "-python" << " " << DEFAULT_PATH << "CGoGN_3/data/rewrite_landmark_csv.py";
 		if (system(command.str().c_str()) == 0)
 		{
-			std::cout << "Yes command" << std::endl;
 			std::map<std::string, std::vector<float>> data;
 			command.str("");
 			command.clear();
@@ -804,7 +782,7 @@ public:
 		std::vector<std::vector<Vertex>> tmp(landmarks.size());
 		for(int i = 0; i < landmarks.size(); i++)
 		{
-			std::cout << "Area numéro " << i << std::endl;
+			std::cout << "Area number " << i << std::endl;
 			foreach_adjacent_vertex_through_edge(m,landmarks[i],[&](Vertex v) -> bool {
 				if (!((std::find(std::begin(influence_areas[i]) , std::end(influence_areas[i]) , v) != std::end(influence_areas[i])) && (v == landmarks[i])))
 				{
@@ -969,7 +947,7 @@ protected:
 			take_screenshot(nb_screenshot, pos_aus_[nb_au]->name());
 			if (weight < 5.)
 			{
-				blending(*selected_mesh_, {pos_aus_[nb_au]}, {weight});
+				modeling::blending(*selected_mesh_, {pos_aus_[nb_au]}, {weight},pos_attr_name);
 				weight += 0.003;
 				nb_screenshot++;
 			}
@@ -984,7 +962,7 @@ protected:
 							<< " " << directory_ << "CSV_VIDEO/" << " " << path_openface_ << "build/bin/"
 							<< " "
 							<< "-python" << " " << DEFAULT_PATH << "CGoGN_3/data/jacob_alphas.py"
-							<< " -static" << " " << DEFAULT_PATH << "CGoGN_3/data/";
+							<< " -static" << " " << directory_ << "CSV_VIDEO/";
 					if (system(command.str().c_str()) == 0) 
 					{
 						std::cout << "Command succesfully executed" << std::endl;
@@ -1003,12 +981,11 @@ protected:
 				else
 				{
 					weight = 0.;
-					blending(*selected_mesh_, {pos_aus_[nb_au]}, {weight});
+					modeling::blending(*selected_mesh_, {pos_aus_[nb_au]}, {weight},pos_attr_name);
 					nb_screenshot = 0;
 				}
 			}
 		}
-		
 		ImGui::Separator();
 	}
 
@@ -1089,9 +1066,9 @@ protected:
 				command << "xdg-open " << path_video_;
 				if (system(command.str().c_str()) == 0)
 				{
-					std::cout << "Command successfully executed" << std::endl;
+					std::cout << "Launching xdg" << std::endl;
 				}
-				sleep(0.5);
+				sleep(1);
 			}
 			
 
@@ -1106,6 +1083,39 @@ protected:
 				incr = count_timer_csv + 1;
 				modeling::blending(*selected_mesh_,{pos_aus_[0]},{1},pos_attr_name);
 			}
+
+			if (incr == count_timer_csv && count_timer_csv != -1)
+			{
+				if(ImGui::Button("Analysis of CSV"))
+				{
+					std::ostringstream command;
+					command << path_openface_ << "build/bin/csv_script_matrix.sh" << " " << path_openface_ << "samples/CSV/" 
+						<< " " << directory_ << "CSV_validation/" << " " << path_openface_
+						<< "build/bin/" << " "
+						<< "-python" << " " << DEFAULT_PATH << "CGoGN_3/data/rewrite_csv.py";
+					if (system(command.str().c_str()) == 0)
+					{
+						std::ostringstream path;
+						path << directory_ << "CSV_validation/CSV.csv";
+						std::string string_path = path.str();
+						Eigen::MatrixXd weights_detected_validation_;
+						Eigen::MatrixXd weights_confirm_validation_;
+						Eigen::VectorXd vec;
+						csv_parser(string_path, ',', weights_detected_validation_, weights_confirm_validation_, vec);
+						path.str("");
+						path.clear();
+						path << current_item_csv;
+						string_path = path.str();
+						csv_parser(string_path, ',', csv_weights_detected_, csv_weights_confirm_, vec);
+						validation_csv("csv_validation.txt" , string_path, csv_weights_detected_ , weights_detected_validation_ , 0.1);
+						if(system("rm -rf *.jpg"))
+							std::cout << "removing screenshots" << std::endl;
+					}
+				}
+			}
+			
+
+
 		}
 
 		if (incr < count_timer_csv)
@@ -1131,34 +1141,6 @@ protected:
 			std::cout << "poids_frame : " << poids_frame << std::endl;
 			std::cout << "timestamp_csv : " << timestamp_csv_[incr] << std::endl;
 			nb_screen++;
-		}
-
-		if (incr == count_timer_csv && once)
-		{
-			once = false;
-			std::ostringstream command;
-			command << path_openface_ << "build/bin/csv_script_matrix.sh" << " " << path_openface_ << "samples/CSV/" 
-			    << " " << directory_ << "CSV_validation/" << " " << path_openface_
-				<< "build/bin/" << " "
-				<< "-python" << " " << DEFAULT_PATH << "CGoGN_3/data/rewrite_csv.py";
-			if (system(command.str().c_str()) == 0)
-			{
-				std::ostringstream path;
-				path << directory_ << "CSV_validation/CSV.csv";
-				std::string string_path = path.str();
-				Eigen::MatrixXd weights_detected_validation_;
-				Eigen::MatrixXd weights_confirm_validation_;
-				Eigen::VectorXd vec;
-				csv_parser(string_path, ',', weights_detected_validation_, weights_confirm_validation_, vec);
-				std::cout << string_path << std::endl;
-				path.str("");
-				path.clear();
-				path << current_item_csv;
-				string_path = path.str();
-				std::cout << string_path << std::endl;
-				csv_parser(string_path, ',', csv_weights_detected_, csv_weights_confirm_, vec);
-				validation_csv("csv_validation.txt" , string_path, csv_weights_detected_ , weights_detected_validation_ , 0.1);
-			}
 		}
 
 		//ImGui::Separator();
@@ -1320,10 +1302,9 @@ private:
 	std::string path_video_;
 
 	// For moving landmarks
-	Vec3 center_of_face = Vec3(1,1,0);
+	Vec3 center_of_face = Vec3(0,0,0);
 
 	std::shared_ptr<Attribute<Vec3>> selected_vertex_position_;
-	std::vector<std::shared_ptr<Attribute<Vec3>>> pos_aus_;
 	std::vector<std::shared_ptr<Attribute<Vec3>>> attribute_to_blend_;
 	std::vector<float> weights;
 	std::vector<bool> apply_weights; 
@@ -1340,7 +1321,6 @@ private:
 	std::vector<std::string> path_csv_;
 	std::string directory_;
 	std::string path_openface_;
-
 	std::string pos_attr_name;
 
 	// CSV variables 

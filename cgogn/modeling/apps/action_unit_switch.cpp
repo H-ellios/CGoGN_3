@@ -38,6 +38,7 @@
 #include <GL/gl3w.h>
 #include <GLFW/glfw3.h>
 #include <imgui/imgui_internal.h>
+#include <chrono>
 
 #include <cgogn/core/ui_modules/mesh_provider.h>
 #include <cgogn/modeling/ui_modules/action_unit_change.h>
@@ -48,6 +49,7 @@
 
 #include <cgogn/core/types/mesh_views/cell_filter.h>
 #include <cgogn/modeling/algos/subdivision.h>
+#include <cgogn/modeling/algos/blending.h>
 
 #define DEFAULT_MESH_PATH CGOGN_STR(CGOGN_DATA_PATH) "meshes/"
 #define DEFAULT_TEXTURE_PATH CGOGN_STR(CGOGN_DATA_PATH) "textures/"
@@ -65,6 +67,12 @@ using Attribute = typename cgogn::mesh_traits<Mesh>::Attribute<T>;
 
 int main(int argc, char** argv)
 {
+
+	using std::chrono::high_resolution_clock;
+    using std::chrono::duration_cast;
+    using std::chrono::duration;
+    using std::chrono::milliseconds;
+
 	using Vertex = typename cgogn::mesh_traits<Mesh>::Vertex;
 	using Edge = typename cgogn::mesh_traits<Mesh>::Edge;
 	using Face = typename cgogn::mesh_traits<Mesh>::Face;
@@ -163,7 +171,117 @@ int main(int argc, char** argv)
 	}
 
 
-	std::cout << "ICI 2" << std::endl;
+	std::vector<std::string> args(argv, argv+argc);
+  	for (size_t i = 1; i < args.size(); ++i) {
+    	if (args[i] == "-perf") {
+			std::ofstream perfFile("performance.txt");
+			if (perfFile.is_open())
+			{
+				int nb_iter = 5000;
+				std::vector<std::shared_ptr<Attribute<Vec3>>> attribute_to_blend_;
+				std::vector<float> weight_list;
+
+				perfFile << "Performance tests for blending\n\n";
+
+				for (int j = 1; j < auc.pos_aus_.size() ; j++)
+				{
+					attribute_to_blend_.push_back(auc.pos_aus_[j]);
+					
+					auto t1 = high_resolution_clock::now();
+					for (int k = 0; k < nb_iter; k++)
+					{
+						for (int z = 0; z < attribute_to_blend_.size(); z++)
+						{
+							int weight = (std::rand()%5) + 1;
+							weight_list.push_back(weight);
+						}
+						auc.blending(*m_pos,attribute_to_blend_,weight_list);
+						weight_list.clear();
+					}
+					auto t2 = high_resolution_clock::now();
+
+					duration<double, std::milli> ms_double = t2 - t1;
+
+					perfFile << ms_double.count() << "ms for " << nb_iter << " blendings with " << j << " AU with weight change for each AUs\n";
+					perfFile << ms_double.count() / float(nb_iter) << "ms per operation for blending with " << j << " AU with weight change for each AUs\n";
+				}
+
+				perfFile << "\n\n";
+
+				attribute_to_blend_.clear();
+				weight_list.clear();
+
+				for (int j = 1; j < auc.pos_aus_.size() ; j++)
+				{
+					attribute_to_blend_.push_back(auc.pos_aus_[j]);
+					weight_list.push_back((std::rand()%5) + 1);
+					
+					auto t1 = high_resolution_clock::now();
+					for (int k = 0; k < nb_iter; k++)
+					{
+						auc.blending(*m_pos,attribute_to_blend_,weight_list);
+					}
+					auto t2 = high_resolution_clock::now();
+
+					duration<double, std::milli> ms_double = t2 - t1;
+
+					perfFile << ms_double.count() << "ms for " << nb_iter << " blendings with " << j << " AU\n";
+					perfFile << ms_double.count() / float(nb_iter) << "ms per operation for blending with " << j << " AU\n";
+
+				}
+
+				perfFile << "\n\n";
+
+				attribute_to_blend_.clear();
+				weight_list.clear();
+
+				for (int j = 1; j < auc.pos_aus_.size() ; j++)
+				{
+					attribute_to_blend_.push_back(auc.pos_aus_[j]);
+					auto t1 = high_resolution_clock::now();
+					for (int k = 0; k < nb_iter; k++)
+					{
+						for (int z = 0; z < attribute_to_blend_.size(); z++)
+						{
+							int weight = (std::rand()%5) + 1;
+							weight_list.push_back(weight);
+						}
+						cgogn::modeling::blending(*m_pos,attribute_to_blend_,weight_list,"position");
+						weight_list.clear();
+					}
+					auto t2 = high_resolution_clock::now();
+
+					duration<double, std::milli> ms_double = t2 - t1;
+
+					perfFile << ms_double.count() << "ms for " << nb_iter << " blendings with modeling::blending with " << j << " AU weight change for each AUs\n";
+					perfFile << ms_double.count() / float(nb_iter) << "ms per operation for blending with modeling::blending with " << j << " AU weight change for each AUs\n";
+				}
+
+				perfFile << "\n\n";
+
+				attribute_to_blend_.clear();
+				weight_list.clear();
+
+				for (int j = 1; j < auc.pos_aus_.size() ; j++)
+				{
+					attribute_to_blend_.push_back(auc.pos_aus_[j]);
+					weight_list.push_back(rand()%5 + 1);
+					auto t1 = high_resolution_clock::now();
+					for (int k = 0; k < nb_iter; k++)
+					{
+						cgogn::modeling::blending(*m_pos,attribute_to_blend_,weight_list,"position");
+					}
+					auto t2 = high_resolution_clock::now();
+
+					duration<double, std::milli> ms_double = t2 - t1;
+
+					perfFile << ms_double.count() << "ms for " << nb_iter << " blendings with modeling::blending with " << j << " AU\n";
+					perfFile << ms_double.count() / float(nb_iter) << "ms per operation for blending with modeling::blending with " << j << " AU\n";
+				}
+			}
+			perfFile.close();
+    	}
+  	}
 	
 	return app.launch();
 }
